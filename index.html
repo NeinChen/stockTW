@@ -1,0 +1,1581 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>持倉台帳 · 台股投資追蹤</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;700;900&family=Noto+Sans+TC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#F1EEE6;
+  --panel:#FDFCF9;
+  --ink:#3B4652;
+  --ink-soft:#7C8794;
+  --line:#E3DDCF;
+  --accent:#BB9A63;
+  --accent-soft:#F1E7D2;
+  --pos:#5C9179;
+  --pos-bg:#EAF2ED;
+  --neg:#C67A72;
+  --neg-bg:#FAEEEC;
+  --topbar-bg:#3F4C58;
+  --radius:10px;
+  font-size:18px;
+}
+*{box-sizing:border-box;}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--ink);
+  font-family:'Noto Sans TC',sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+.mono{font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums;}
+h1,h2,h3{font-family:'Noto Serif TC',serif;margin:0;}
+a{color:inherit;}
+button{
+  font-family:inherit;
+  cursor:pointer;
+  border:1px solid var(--ink);
+  background:var(--ink);
+  color:#fff;
+  border-radius:7px;
+  padding:9px 16px;
+  font-size:15.5px;
+  font-weight:500;
+  transition:opacity .15s;
+}
+button:hover{opacity:.85;}
+button.ghost{
+  background:transparent;
+  color:var(--ink);
+  border:1px solid var(--line);
+}
+button.danger{background:var(--neg);border-color:var(--neg);}
+button.small{padding:5px 11px;font-size:13.5px;border-radius:6px;}
+input,select{
+  font-family:inherit;
+  font-size:15.5px;
+  padding:8px 10px;
+  border:1px solid var(--line);
+  border-radius:7px;
+  background:#fff;
+  color:var(--ink);
+  width:100%;
+}
+input:focus,select:focus,button:focus-visible{
+  outline:2px solid var(--accent);
+  outline-offset:1px;
+}
+input.input-error{border-color:var(--neg);background:var(--neg-bg);}
+label{font-size:13.5px;color:var(--ink-soft);display:block;margin-bottom:4px;font-weight:500;}
+
+/* ---------- Header / Ticker ---------- */
+.topbar{
+  background:var(--topbar-bg);
+  color:#fff;
+  padding:16px 20px 0 20px;
+}
+.topbar-row{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  padding-bottom:14px;
+}
+.brand{display:flex;align-items:baseline;gap:10px;}
+.brand h1{font-size:25px;letter-spacing:.02em;}
+.brand .tag{font-size:12px;color:#D2C6AC;font-family:'IBM Plex Mono',monospace;letter-spacing:.08em;text-transform:uppercase;}
+.topbar-actions{display:flex;gap:8px;align-items:center;font-size:13.5px;color:#D6DCE2;flex-wrap:wrap;}
+.dot{width:7px;height:7px;border-radius:50%;background:#7C8794;display:inline-block;margin-right:5px;}
+.dot.live{background:#7DC7A6;box-shadow:0 0 0 3px rgba(125,199,166,.25);}
+.ticker-wrap{
+  overflow:hidden;
+  border-top:1px solid rgba(255,255,255,.12);
+  white-space:nowrap;
+  position:relative;
+  height:38px;
+}
+.ticker{
+  display:inline-flex;
+  gap:28px;
+  padding:9px 0;
+  animation:scroll 30s linear infinite;
+}
+.ticker-wrap:hover .ticker{animation-play-state:paused;}
+@keyframes scroll{
+  from{transform:translateX(0);}
+  to{transform:translateX(-50%);}
+}
+.ticker-item{font-family:'IBM Plex Mono',monospace;font-size:14px;color:#E4E7EA;}
+.ticker-item b{color:#fff;margin-right:6px;}
+.ticker-item.up{color:#8FD1B3;}
+.ticker-item.down{color:#E6ABA4;}
+@media (prefers-reduced-motion: reduce){ .ticker{animation:none;} }
+
+/* ---------- Tabs ---------- */
+.tabs{
+  display:flex;gap:4px;padding:10px 20px 0 20px;background:var(--bg);
+  border-bottom:1px solid var(--line);
+  overflow-x:auto;
+}
+.tab-btn{
+  background:transparent;border:none;color:var(--ink-soft);
+  padding:11px 17px;font-weight:700;font-size:15.5px;border-radius:8px 8px 0 0;
+  border-bottom:2px solid transparent;
+}
+.tab-btn.active{color:var(--ink);border-bottom:2px solid var(--accent);background:var(--panel);}
+
+main{padding:18px 20px 60px 20px;max-width:1180px;margin:0 auto;}
+.view{display:none;}
+.view.active{display:block;}
+
+.card{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  padding:18px 20px;
+  margin-bottom:16px;
+}
+.card-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px;flex-wrap:wrap;}
+.card-head h2{font-size:18px;}
+.card-head .sub{font-size:13.5px;color:var(--ink-soft);}
+
+.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;}
+.stat{
+  background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px 14px;
+}
+.stat .label{font-size:12.5px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;}
+.stat .value{font-size:22px;font-weight:600;font-family:'IBM Plex Mono',monospace;}
+.pos{color:var(--pos);}
+.neg{color:var(--neg);}
+
+table{width:100%;border-collapse:collapse;font-size:15px;}
+th{
+  text-align:right;font-size:12.5px;color:var(--ink-soft);text-transform:uppercase;
+  letter-spacing:.03em;padding:7px 8px;border-bottom:1px solid var(--line);font-weight:600;
+}
+th:first-child,td:first-child{text-align:left;}
+td{padding:10px 8px;border-bottom:1px solid #EFEAE0;text-align:right;white-space:nowrap;}
+tr:last-child td{border-bottom:none;}
+.name-cell{display:flex;flex-direction:column;text-align:left;}
+.name-cell .code{font-size:12.5px;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;}
+.pill{
+  display:inline-block;padding:2px 9px;border-radius:20px;font-size:12.5px;font-weight:600;
+}
+.pill.buy{background:var(--pos-bg);color:var(--pos);}
+.pill.sell{background:var(--neg-bg);color:var(--neg);}
+.row-actions{display:flex;gap:6px;justify-content:flex-end;}
+.empty{
+  text-align:center;padding:30px 10px;color:var(--ink-soft);font-size:15px;
+}
+.toggle-row{display:flex;align-items:center;gap:8px;font-size:14.5px;}
+.switch{
+  position:relative;width:42px;height:23px;background:#E3DDCF;border-radius:20px;cursor:pointer;flex-shrink:0;
+}
+.switch.on{background:var(--accent);}
+.switch::after{
+  content:'';position:absolute;top:2px;left:2px;width:19px;height:19px;background:#fff;border-radius:50%;
+  transition:transform .15s;
+}
+.switch.on::after{transform:translateX(19px);}
+
+.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:11px;align-items:end;}
+.form-grid .full{grid-column:1/-1;}
+.hint{font-size:12.5px;color:var(--ink-soft);margin-top:3px;}
+.manual-price-input{width:100px;padding:5px 7px;font-size:14px;text-align:right;display:inline-block;}
+.manual-badge{font-size:11px;color:var(--accent);margin-left:5px;background:var(--accent-soft);padding:1px 7px;border-radius:8px;}
+.banner{
+  background:var(--accent-soft);border:1px solid var(--accent);color:#7A5F35;
+  padding:10px 13px;border-radius:8px;font-size:14px;margin-bottom:14px;
+}
+.banner.warn{background:var(--neg-bg);border-color:var(--neg);color:#8A4A43;}
+
+/* Modal (settings) */
+.overlay{
+  position:fixed;inset:0;background:rgba(59,70,82,.5);display:none;align-items:flex-start;justify-content:center;
+  padding:40px 16px;z-index:50;overflow:auto;
+}
+.overlay.open{display:flex;}
+.modal{
+  background:var(--panel);border-radius:12px;max-width:520px;width:100%;padding:22px 24px;
+  border:1px solid var(--line);
+}
+.modal h3{margin-bottom:14px;font-size:18.5px;}
+.modal .close{float:right;}
+.field{margin-bottom:12px;}
+footer.note{font-size:12.5px;color:var(--ink-soft);margin-top:6px;line-height:1.6;}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-row">
+    <div class="brand">
+      <h1>持倉台帳</h1>
+      <span class="tag">TW Stock Ledger</span>
+    </div>
+    <div class="topbar-actions">
+      <span><span class="dot" id="live-dot"></span><span id="live-text">尚未取得股價</span></span>
+      <button class="ghost small" id="btn-refresh" style="color:#fff;border-color:rgba(255,255,255,.3);">立即更新股價</button>
+      <button class="ghost small" id="btn-settings" style="color:#fff;border-color:rgba(255,255,255,.3);">設定 / 雲端同步</button>
+    </div>
+  </div>
+  <div class="ticker-wrap"><div class="ticker" id="ticker"></div></div>
+</div>
+
+<nav class="tabs" id="tabs">
+  <button class="tab-btn active" data-tab="holdings">持倉</button>
+  <button class="tab-btn" data-tab="transactions">交易紀錄</button>
+  <button class="tab-btn" data-tab="dividends">股利紀錄</button>
+  <button class="tab-btn" data-tab="reports">報表</button>
+</nav>
+
+<main>
+
+  <!-- ============ HOLDINGS ============ -->
+  <section class="view active" id="view-holdings">
+    <div id="price-source-banner"></div>
+    <div class="card">
+      <div class="card-head">
+        <h2>整體損益</h2>
+        <div class="toggle-row">
+          <span>不含息</span>
+          <div class="switch on" id="toggle-dividend"></div>
+          <span>含息</span>
+        </div>
+      </div>
+      <div class="summary-grid" id="summary-grid"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>證券帳戶額度</h2>
+        <span class="sub">輸入你原始的入金總額，系統會自動扣掉買股成本、加回賣股收入與股利</span>
+      </div>
+      <div class="form-grid" style="align-items:end;margin-bottom:12px;">
+        <div>
+          <label>原始入金總額（元）</label>
+          <input type="number" id="initial-capital-input" step="1" placeholder="例如 500000">
+        </div>
+        <div><button type="button" id="btn-save-capital">儲存</button></div>
+      </div>
+      <div class="summary-grid" id="capital-summary-grid"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>目前持倉</h2>
+        <span class="sub">股價每 45 秒自動更新（僅於本頁開啟時）</span>
+      </div>
+      <div id="holdings-table"></div>
+    </div>
+  </section>
+
+  <!-- ============ TRANSACTIONS ============ -->
+  <section class="view" id="view-transactions">
+    <div class="card">
+      <div class="card-head"><h2 id="tx-form-title">新增交易紀錄</h2></div>
+      <form id="form-tx" class="form-grid">
+        <div>
+          <label>股票代號</label>
+          <input type="text" id="tx-code" placeholder="例如 2609" required>
+        </div>
+        <div class="full" style="max-width:260px;">
+          <label>股票名稱（自動帶入，可修改）</label>
+          <input type="text" id="tx-name" placeholder="陽明">
+        </div>
+        <div>
+          <label>買 / 賣</label>
+          <select id="tx-type">
+            <option value="buy">買進</option>
+            <option value="sell">賣出</option>
+          </select>
+        </div>
+        <div>
+          <label>交易日期</label>
+          <input type="text" id="tx-date" inputmode="numeric" placeholder="20260122" maxlength="10" required>
+          <span class="hint">直接輸入8碼數字，例如 20260122，離開欄位會自動顯示為 2026/01/22</span>
+        </div>
+        <div>
+          <label>股數</label>
+          <input type="number" id="tx-qty" min="0" step="1" required placeholder="例如 1000">
+        </div>
+        <div>
+          <label>成交價 (元/股，2位小數)</label>
+          <input type="number" id="tx-price" min="0" step="0.01" required>
+        </div>
+        <div>
+          <label id="tx-actual-label">實際支出總金額（元）</label>
+          <input type="number" id="tx-actual" min="0" step="1" placeholder="帳戶實際被扣的總金額">
+        </div>
+        <div>
+          <label>手續費/稅（自動計算，可手動覆蓋）</label>
+          <input type="number" id="tx-fee" step="1" value="0">
+        </div>
+        <div class="full">
+          <span class="hint" id="tx-fee-hint">手續費 = 實際支出總金額 − 成交價 × 股數（買進填「實際支出」，賣出填「實際入帳金額」，證交稅請一併算進去）</span>
+        </div>
+        <div class="full">
+          <label>備註（選填）</label>
+          <input type="text" id="tx-note">
+        </div>
+        <div class="full" style="display:flex;gap:8px;">
+          <button type="submit" id="tx-submit-btn">新增交易</button>
+          <button type="button" class="ghost" id="tx-cancel-edit" style="display:none;">取消編輯</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>交易明細</h2></div>
+      <div id="tx-table"></div>
+    </div>
+  </section>
+
+  <!-- ============ DIVIDENDS ============ -->
+  <section class="view" id="view-dividends">
+    <div class="card">
+      <div class="card-head"><h2 id="div-form-title">新增股利／股息紀錄</h2></div>
+      <form id="form-div" class="form-grid">
+        <div>
+          <label>股票代號</label>
+          <input type="text" id="div-code" placeholder="例如 2609" required>
+        </div>
+        <div class="full" style="max-width:260px;">
+          <label>股票名稱</label>
+          <input type="text" id="div-name" placeholder="陽明">
+        </div>
+        <div>
+          <label>發放/除息日期</label>
+          <input type="text" id="div-date" inputmode="numeric" placeholder="20260122" maxlength="10" required>
+          <span class="hint">直接輸入8碼數字，例如 20260122，離開欄位會自動顯示為 2026/01/22</span>
+        </div>
+        <div>
+          <label>每股配發金額（元/股）</label>
+          <input type="number" id="div-amt" min="0" step="0.01" required>
+        </div>
+        <div class="full">
+          <label>備註（例如：現金股利、股票股利換算等）</label>
+          <input type="text" id="div-note">
+        </div>
+        <div class="full">
+          <button type="submit" id="div-submit-btn">新增股利紀錄</button>
+          <button type="button" class="ghost" id="div-cancel-edit" style="display:none;">取消編輯</button>
+        </div>
+      </form>
+      <p class="hint">系統會依你在「交易紀錄」中實際持有的股數（依日期自動比對），自動計算該次股利可領到的金額。</p>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>股利明細</h2></div>
+      <div id="div-table"></div>
+    </div>
+  </section>
+
+  <!-- ============ REPORTS ============ -->
+  <section class="view" id="view-reports">
+    <div class="card">
+      <div class="card-head">
+        <h2>自訂區間損益</h2>
+      </div>
+      <div class="form-grid" style="margin-bottom:14px;">
+        <div><label>開始日期</label><input type="date" id="rep-start"></div>
+        <div><label>結束日期</label><input type="date" id="rep-end"></div>
+        <div><button id="btn-run-report" type="button">計算</button></div>
+      </div>
+      <div class="banner">
+        區間內「已實現損益」與「股利」會依你選擇的日期範圍計算；「未實現損益」固定以<b>目前市價</b>估算（不會隨區間切分），並在下表分開列出。
+      </div>
+      <div id="report-table"></div>
+    </div>
+  </section>
+
+</main>
+
+<div class="overlay" id="overlay-settings">
+  <div class="modal">
+    <h3>設定 / Google Sheet 雲端同步</h3>
+    <div class="field">
+      <label>Google Apps Script 網頁應用程式網址（部署後取得）</label>
+      <input type="text" id="setting-url" placeholder="https://script.google.com/macros/s/xxxx/exec">
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+      <button id="btn-save-url">儲存並同步</button>
+      <button class="ghost" id="btn-export">匯出 JSON 備份</button>
+      <button class="ghost" id="btn-import">匯入 JSON 備份</button>
+      <input type="file" id="file-import" accept="application/json" style="display:none;">
+    </div>
+    <footer class="note">
+      尚未設定網址時，資料只會存在此瀏覽器（localStorage）。設定網址後，每次新增/編輯/刪除都會即時寫入你的 Google 試算表；開啟頁面時也會自動從試算表拉取最新資料。部署步驟請見附上的 README.md。
+    </footer>
+    <div style="text-align:right;margin-top:14px;">
+      <button class="ghost" id="btn-close-settings">關閉</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ===================== 狀態與儲存 ===================== */
+const LOCAL_KEY = 'stock_ledger_v1';
+let state = {
+  transactions: [],
+  dividends: [],
+  settings: { scriptUrl: '', includeDividend: true, initialCapital: null },
+  prices: {},       // code -> {price, prevClose, name, time}
+  manualPrices: {}, // code -> 使用者手動輸入的現價（所有自動來源都查不到時的備援，暫存在本機）
+  companyNames: {}  // code -> name
+};
+
+function loadLocal(){
+  try{
+    const raw = localStorage.getItem(LOCAL_KEY);
+    if (raw){
+      const parsed = JSON.parse(raw);
+      state.transactions = parsed.transactions || [];
+      state.dividends = parsed.dividends || [];
+      state.settings = Object.assign(state.settings, parsed.settings || {});
+      state.companyNames = parsed.companyNames || {};
+      state.manualPrices = parsed.manualPrices || {};
+    }
+  }catch(e){ console.warn('讀取本機資料失敗', e); }
+}
+function saveLocal(){
+  localStorage.setItem(LOCAL_KEY, JSON.stringify({
+    transactions: state.transactions,
+    dividends: state.dividends,
+    settings: state.settings,
+    companyNames: state.companyNames,
+    manualPrices: state.manualPrices
+  }));
+}
+function uid(){ return 'id_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,8); }
+
+/* ===================== 雲端同步 (Google Apps Script) ===================== */
+async function syncFromServer(){
+  const url = state.settings.scriptUrl;
+  if (!url) return;
+  try{
+    setLiveStatus('syncing', '同步中…');
+    const res = await fetch(url + '?action=getData');
+    const json = await res.json();
+    if (json.ok){
+      state.transactions = (json.data.transactions||[]).map(normalizeTx);
+      state.dividends = (json.data.dividends||[]).map(normalizeDiv);
+      saveLocal();
+      renderAll();
+      setLiveStatus('ok', '雲端同步完成');
+    } else {
+      setLiveStatus('err', '雲端同步失敗：' + json.error);
+    }
+  }catch(e){
+    console.warn(e);
+    setLiveStatus('err', '無法連線到 Google Sheet（請檢查網址與部署權限）');
+  }
+}
+
+async function pushToServer(action, payload){
+  const url = state.settings.scriptUrl;
+  if (!url) return null;
+  try{
+    const res = await fetch(url, {
+      method:'POST',
+      headers:{ 'Content-Type':'text/plain;charset=utf-8' }, // 避免觸發 CORS 預檢
+      body: JSON.stringify({ action, payload })
+    });
+    const json = await res.json();
+    if (json.ok){
+      state.transactions = (json.data.transactions||[]).map(normalizeTx);
+      state.dividends = (json.data.dividends||[]).map(normalizeDiv);
+      saveLocal();
+      return json;
+    } else {
+      alert('雲端寫入失敗：' + json.error);
+    }
+  }catch(e){
+    console.warn(e);
+    alert('無法連線到 Google Sheet，這筆資料先保留在本機，稍後可按「設定」重新同步。');
+  }
+  return null;
+}
+
+function normalizeTx(t){
+  return {
+    id: t.id, code: String(t.code), name: t.name || '', date: t.date,
+    type: t.type, shares: Number(t.shares), price: Number(t.price),
+    fee: Number(t.fee||0),
+    actualAmount: (t.actualAmount===''||t.actualAmount===undefined||t.actualAmount===null) ? null : Number(t.actualAmount),
+    note: t.note || ''
+  };
+}
+function normalizeDiv(d){
+  return {
+    id: d.id, code: String(d.code), name: d.name || '', date: d.date,
+    amountPerShare: Number(d.amountPerShare), note: d.note || ''
+  };
+}
+
+/* 新增/更新/刪除：本機優先更新畫面，若有設定雲端則同時同步 */
+async function addTransaction(tx){
+  tx.id = uid();
+  state.transactions.push(tx);
+  saveLocal(); renderAll();
+  if (state.settings.scriptUrl) await pushToServer('addTransaction', tx);
+}
+async function deleteTransaction(id){
+  state.transactions = state.transactions.filter(t=>t.id!==id);
+  saveLocal(); renderAll();
+  if (state.settings.scriptUrl) await pushToServer('deleteTransaction', {id});
+}
+async function addDividend(d){
+  d.id = uid();
+  state.dividends.push(d);
+  saveLocal(); renderAll();
+  if (state.settings.scriptUrl) await pushToServer('addDividend', d);
+}
+async function deleteDividend(id){
+  state.dividends = state.dividends.filter(d=>d.id!==id);
+  saveLocal(); renderAll();
+  if (state.settings.scriptUrl) await pushToServer('deleteDividend', {id});
+}
+async function updateTransactionRecord(tx){
+  const idx = state.transactions.findIndex(t=>t.id===tx.id);
+  if (idx >= 0) state.transactions[idx] = tx;
+  saveLocal(); renderAll();
+  if (state.settings.scriptUrl) await pushToServer('updateTransaction', tx);
+}
+async function updateDividendRecord(d){
+  const idx = state.dividends.findIndex(x=>x.id===d.id);
+  if (idx >= 0) state.dividends[idx] = d;
+  saveLocal(); renderAll();
+  if (state.settings.scriptUrl) await pushToServer('updateDividend', d);
+}
+
+/* ===================== 即時股價 ===================== */
+let priceTimer = null;
+function setLiveStatus(kind, text){
+  const dot = document.getElementById('live-dot');
+  const label = document.getElementById('live-text');
+  dot.className = 'dot' + (kind==='ok' || kind==='syncing' ? ' live' : '');
+  label.textContent = text;
+}
+
+function allCodes(){
+  const s = new Set();
+  state.transactions.forEach(t=>s.add(t.code));
+  state.dividends.forEach(d=>s.add(d.code));
+  return Array.from(s);
+}
+
+/** 帶逾時保護的 fetch，避免某個來源網路卡住導致整個更新流程卡死 */
+function fetchWithTimeout(url, options={}, timeoutMs=5000){
+  const controller = new AbortController();
+  const timer = setTimeout(()=>controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(()=>clearTimeout(timer));
+}
+
+async function fetchCompanyNames(codes){
+  // 嘗試從公開資料取得公司簡稱（僅在尚未知道名稱時查詢一次）
+  const unknown = codes.filter(c => !state.companyNames[c]);
+  if (unknown.length === 0) return;
+  try{
+    const res = await fetchWithTimeout('https://openapi.twse.com.tw/v1/opendata/t187ap03_L', {}, 5000);
+    const list = await res.json();
+    list.forEach(row=>{
+      const code = row['公司代號'];
+      if (code) state.companyNames[code] = row['公司簡稱'];
+    });
+    saveLocal();
+  }catch(e){
+    console.warn('公司名稱清單取得失敗（可能受瀏覽器 CORS 限制或逾時），改用其他來源。', e);
+  }
+}
+
+async function fetchSingleQuoteViaMis(code){
+  try{
+    const exch = `tse_${code}.tw|otc_${code}.tw`;
+    const res = await fetchWithTimeout(`https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=${encodeURIComponent(exch)}&json=1&_=${Date.now()}`, {}, 5000);
+    const json = await res.json();
+    const item = (json.msgArray || []).find(it => it.c === code);
+    if (!item) return false;
+    const price = parseFloat(item.z) || parseFloat(item.b?.split('_')[0]) || parseFloat(item.a?.split('_')[0]) || parseFloat(item.y) || null;
+    state.prices[code] = { price, prevClose: parseFloat(item.y) || null, name: item.n || code, time: item.t || '' };
+    if (item.n) state.companyNames[code] = item.n;
+    saveLocal();
+    return !!item.n;
+  }catch(e){ return false; }
+}
+
+/** 第二層來源：Yahoo 財經公開報價 API（部分情況下允許瀏覽器跨網域直接查詢） */
+async function fetchYahooQuote(code){
+  for (const suffix of ['.TW', '.TWO']){ // .TW=上市, .TWO=上櫃
+    try{
+      const res = await fetchWithTimeout(`https://query1.finance.yahoo.com/v8/finance/chart/${code}${suffix}`, {}, 5000);
+      if (!res.ok) continue;
+      const json = await res.json();
+      const result = json && json.chart && json.chart.result && json.chart.result[0];
+      const meta = result && result.meta;
+      if (meta && meta.regularMarketPrice != null){
+        return {
+          price: meta.regularMarketPrice,
+          prevClose: meta.previousClose ?? meta.chartPreviousClose ?? null,
+          name: meta.shortName || meta.symbol || code
+        };
+      }
+    }catch(e){ /* 換下一個後綴繼續試 */ }
+  }
+  return null;
+}
+
+async function fetchYahooQuotes(codes){
+  const results = {};
+  await Promise.all(codes.map(async code=>{
+    const q = await fetchYahooQuote(code);
+    if (q) results[code] = q;
+  }));
+  return results;
+}
+
+async function fetchViaGoogleSheet(codes){
+  // 第三層備援：透過使用者自己部署的 Google Apps Script，用 GOOGLEFINANCE 公式查詢
+  // （類似在 Google 試算表打 =GOOGLEFINANCE("TPE:2609") 的效果，在伺服器端執行不受瀏覽器 CORS 限制）
+  const url = state.settings.scriptUrl;
+  if (!url || codes.length === 0) return {};
+  try{
+    // 把 app 這邊已經知道的繁體中文股票名稱一起傳過去，讓 PriceBoard 直接記錄正確中文名稱
+    const names = {};
+    codes.forEach(c=>{ const n = codeName(c); if (n) names[c] = n; });
+    const namesParam = Object.keys(names).length ? `&names=${encodeURIComponent(JSON.stringify(names))}` : '';
+    const res = await fetchWithTimeout(`${url}?action=getPrices&codes=${encodeURIComponent(codes.join(','))}${namesParam}`, {}, 15000);
+    const json = await res.json();
+    if (json.ok) return json.prices || {};
+  }catch(e){ console.warn('Google Sheet 備援查詢失敗或逾時', e); }
+  return {};
+}
+
+async function lookupNameForCode(code, targetInputId){
+  if (!code) return;
+  if (state.companyNames[code]){
+    document.getElementById(targetInputId).value = state.companyNames[code];
+    return;
+  }
+  // 1) 先試即時股價 API 單檔查詢（上市/上櫃都試，順便拿到即時價）
+  const okViaLive = await fetchSingleQuoteViaMis(code);
+  if (okViaLive && state.companyNames[code]){
+    document.getElementById(targetInputId).value = state.companyNames[code];
+    renderTicker(); renderHoldings();
+    return;
+  }
+  // 2) Yahoo 財經報價（常見的第二來源）
+  const yq = await fetchYahooQuote(code);
+  if (yq && yq.name){
+    state.companyNames[code] = yq.name;
+    state.prices[code] = { price: yq.price, prevClose: yq.prevClose, name: yq.name, time: '' };
+    saveLocal();
+    document.getElementById(targetInputId).value = yq.name;
+    renderTicker(); renderHoldings();
+    return;
+  }
+  // 3) 上市公司完整清單
+  await fetchCompanyNames([code]);
+  if (state.companyNames[code]){
+    document.getElementById(targetInputId).value = state.companyNames[code];
+    return;
+  }
+  // 4) 若已連接 Google Sheet，透過 GOOGLEFINANCE 備援查詢
+  if (state.settings.scriptUrl){
+    const prices = await fetchViaGoogleSheet([code]);
+    const info = prices[code];
+    if (info && info.name){
+      state.companyNames[code] = info.name;
+      if (info.price != null) state.prices[code] = { price: info.price, prevClose: info.prevClose, name: info.name, time: '' };
+      saveLocal();
+      document.getElementById(targetInputId).value = info.name;
+      renderTicker(); renderHoldings();
+    }
+  }
+}
+
+async function fetchPrices(){
+  const codes = allCodes();
+  if (codes.length === 0){ setLiveStatus('idle','尚無股票代號'); return; }
+  const exch = codes.map(c => `tse_${c}.tw|otc_${c}.tw`).join('|');
+  let matched = 0, viaYahoo = 0, viaSheet = 0;
+
+  // 來源 1：台灣證交所即時 API（有 5 秒逾時保護，卡住也不會拖住畫面）
+  try{
+    setLiveStatus('syncing', '取得股價中…（來源 1/3）');
+    const res = await fetchWithTimeout(`https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=${encodeURIComponent(exch)}&json=1&_=${Date.now()}`, {}, 5000);
+    const json = await res.json();
+    const arr = json.msgArray || [];
+    arr.forEach(item=>{
+      const code = item.c;
+      if (!code) return;
+      const price = parseFloat(item.z) || parseFloat(item.b?.split('_')[0]) || parseFloat(item.a?.split('_')[0]) || parseFloat(item.y) || null;
+      state.prices[code] = {
+        price: price,
+        prevClose: parseFloat(item.y) || null,
+        name: item.n || state.companyNames[code] || code,
+        time: item.t || ''
+      };
+      if (item.n) state.companyNames[code] = item.n;
+      matched++;
+    });
+  }catch(e){
+    console.warn('來源1(TWSE即時API)失敗或逾時，改用來源2(Yahoo財經)', e);
+  }
+
+  // 來源 2：Yahoo 財經報價（僅查還沒拿到價格的代號）
+  let missing = codes.filter(c => !state.prices[c] || state.prices[c].price == null);
+  if (missing.length > 0){
+    setLiveStatus('syncing', '取得股價中…（來源 2/3：Yahoo財經）');
+    const yahooResults = await fetchYahooQuotes(missing);
+    missing.forEach(c=>{
+      const q = yahooResults[c];
+      if (q && q.price != null){
+        state.prices[c] = { price: q.price, prevClose: q.prevClose, name: q.name || state.companyNames[c] || c, time: '' };
+        if (q.name) state.companyNames[c] = q.name;
+        viaYahoo++;
+      }
+    });
+  }
+
+  // 來源 3：Google Sheet 的 GOOGLEFINANCE 備援（僅查還沒拿到價格、且有連接 Google Sheet 時）
+  missing = codes.filter(c => !state.prices[c] || state.prices[c].price == null);
+  if (missing.length > 0 && state.settings.scriptUrl){
+    setLiveStatus('syncing', '取得股價中…（來源 3/3：Google Sheet）');
+    const fallback = await fetchViaGoogleSheet(missing);
+    missing.forEach(c=>{
+      const info = fallback[c];
+      if (info && info.price != null){
+        state.prices[c] = { price: info.price, prevClose: info.prevClose, name: info.name || state.companyNames[c] || c, time:'' };
+        if (info.name) state.companyNames[c] = info.name;
+        viaSheet++;
+      }
+    });
+  }
+
+  // 只要自動來源這次成功查到真實股價，就清掉先前的手動輸入備援值
+  codes.forEach(c=>{
+    if (state.prices[c] && state.prices[c].price != null && state.manualPrices[c] != null){
+      delete state.manualPrices[c];
+    }
+  });
+
+  saveLocal();
+  renderTicker();
+  renderHoldings();
+  renderPriceSourceBanner(matched, viaYahoo, viaSheet, codes.length);
+  const now = new Date();
+  const total = matched + viaYahoo + viaSheet;
+  if (total === 0 && !state.settings.scriptUrl){
+    setLiveStatus('err', '三個股價來源都查不到（TWSE、Yahoo 皆失敗）');
+  } else {
+    const parts = [];
+    if (viaYahoo>0) parts.push(`${viaYahoo}檔來自Yahoo`);
+    if (viaSheet>0) parts.push(`${viaSheet}檔來自GoogleSheet`);
+    const suffix = parts.length ? `（${parts.join('、')}）` : '';
+    setLiveStatus('ok', `已更新 ${total}/${codes.length} 檔・${now.toLocaleTimeString('zh-TW')}${suffix}`);
+  }
+}
+
+function renderPriceSourceBanner(matched, viaYahoo, viaSheet, totalCodes){
+  const el = document.getElementById('price-source-banner');
+  if (!el) return;
+  if (totalCodes === 0){ el.innerHTML = ''; return; }
+  const total = matched + viaYahoo + viaSheet;
+  if (total === 0){
+    if (state.settings.scriptUrl){
+      el.innerHTML = `<div class="banner warn">TWSE、Yahoo、Google Sheet 三個股價來源目前都查不到資料。請確認 Apps Script 是否已重新部署最新版本、網路是否正常，或稍後再試。</div>`;
+    } else {
+      el.innerHTML = `<div class="banner warn">TWSE 與 Yahoo 兩個股價來源目前都查不到資料（常見於瀏覽器 CORS 限制，或該股票代號輸入有誤）。最穩定的解法是連接 Google Sheet 作為第三層備援（伺服器端執行，不受 CORS 限制）。
+      <div style="margin-top:8px;"><button class="small" id="banner-open-settings">前往設定連接 Google Sheet</button></div></div>`;
+      const btn = document.getElementById('banner-open-settings');
+      if (btn) btn.addEventListener('click', openSettingsModal);
+    }
+  } else if (matched === 0 && viaYahoo === 0 && viaSheet > 0){
+    el.innerHTML = `<div class="banner">TWSE、Yahoo 都查不到，目前股價全部來自 Google Sheet（GOOGLEFINANCE）備援，資料可能有數分鐘延遲。</div>`;
+  } else if (matched === 0 && viaYahoo > 0){
+    el.innerHTML = `<div class="banner">TWSE 直連查不到，目前部分/全部股價改用 Yahoo 財經來源。</div>`;
+  } else {
+    el.innerHTML = '';
+  }
+}
+
+function startPriceLoop(){
+  fetchPrices();
+  if (priceTimer) clearInterval(priceTimer);
+  priceTimer = setInterval(fetchPrices, 45000); // 45 秒
+}
+
+/* ===================== FIFO / 損益核心邏輯 ===================== */
+function buildLots(code){
+  const txs = state.transactions
+    .filter(t=>t.code===code)
+    .slice()
+    .sort((a,b)=> a.date.localeCompare(b.date));
+  const lots = [];
+  const realized = [];
+  txs.forEach(t=>{
+    const shares = Number(t.shares);
+    if (t.type === 'buy'){
+      const fee = Number(t.fee||0);
+      const price = Number(t.price);
+      // 成本優先使用使用者輸入的「實際支出總金額」；沒填的話用 成交價×股數+手續費 計算（結果應相同）
+      const actualAmount = (t.actualAmount!=null && !isNaN(t.actualAmount)) ? Number(t.actualAmount) : (shares*price + fee);
+      lots.push({ date:t.date, shares, price, fee, actualAmount, consumptions:[] });
+    } else if (t.type === 'sell'){
+      let remain = shares;
+      const sellFeeTotal = Number(t.fee||0);
+      const sellPrice = Number(t.price);
+      for (const lot of lots){
+        if (remain <= 0) break;
+        const lotUsed = lot.consumptions.reduce((s,c)=>s+c.shares,0);
+        const lotRemaining = lot.shares - lotUsed;
+        if (lotRemaining <= 0) continue;
+        const take = Math.min(lotRemaining, remain);
+        lot.consumptions.push({date:t.date, shares:take});
+        const buyFeeAlloc = lot.fee * (take/lot.shares);
+        const buyActualAlloc = lot.actualAmount * (take/lot.shares);
+        const sellFeeAlloc = sellFeeTotal * (take/shares);
+        realized.push({
+          buyDate: lot.date, sellDate: t.date, shares: take,
+          buyPrice: lot.price, buyFeeAlloc, buyActualAlloc, sellPrice, sellFeeAlloc
+        });
+        remain -= take;
+      }
+    }
+  });
+  return { lots, realized };
+}
+
+function remainingAtDate(lot, dateStr){
+  const consumed = lot.consumptions
+    .filter(c => c.date <= dateStr)
+    .reduce((s,c)=>s+c.shares, 0);
+  return lot.shares - consumed;
+}
+
+const TODAY = new Date().toISOString().slice(0,10);
+
+function currentHolding(lots, asOfDate){
+  asOfDate = asOfDate || TODAY;
+  let shares = 0, cost = 0;
+  lots.forEach(lot=>{
+    const rem = remainingAtDate(lot, asOfDate);
+    if (rem > 0){
+      shares += rem;
+      cost += lot.actualAmount * (rem/lot.shares);
+    }
+  });
+  return { shares, cost };
+}
+
+function dividendsForCode(code, lots, rangeStart, rangeEnd){
+  const divs = state.dividends.filter(d=>d.code===code);
+  let total = 0;
+  const details = [];
+  divs.forEach(d=>{
+    if (rangeStart && d.date < rangeStart) return;
+    if (rangeEnd && d.date > rangeEnd) return;
+    let sharesHeld = 0;
+    lots.forEach(lot=>{
+      if (lot.date <= d.date) sharesHeld += remainingAtDate(lot, d.date);
+    });
+    const amt = sharesHeld * Number(d.amountPerShare);
+    total += amt;
+    details.push({ date:d.date, sharesHeld, amountPerShare:Number(d.amountPerShare), amount:amt });
+  });
+  return { total, details };
+}
+
+function realizedForRange(realized, rangeStart, rangeEnd){
+  let pnl=0, proceeds=0, costBasis=0;
+  realized.forEach(r=>{
+    if (rangeStart && r.sellDate < rangeStart) return;
+    if (rangeEnd && r.sellDate > rangeEnd) return;
+    const buyCost = r.buyActualAlloc!=null ? r.buyActualAlloc : (r.shares*r.buyPrice + r.buyFeeAlloc);
+    const sellRev = r.shares*r.sellPrice - r.sellFeeAlloc;
+    pnl += (sellRev - buyCost);
+    proceeds += sellRev; costBasis += buyCost;
+  });
+  return { pnl, proceeds, costBasis };
+}
+
+function totalInvested(code){
+  return state.transactions
+    .filter(t=>t.code===code && t.type==='buy')
+    .reduce((s,t)=>{
+      const shares = Number(t.shares), price = Number(t.price), fee = Number(t.fee||0);
+      const actualAmount = (t.actualAmount!=null && !isNaN(t.actualAmount)) ? Number(t.actualAmount) : (shares*price+fee);
+      return s + actualAmount;
+    }, 0);
+}
+
+/** 帳戶額度：所有股票、所有時間的買進實際支出總額 */
+function totalBuyAmountAll(){
+  return state.transactions.filter(t=>t.type==='buy').reduce((s,t)=>{
+    const shares=Number(t.shares), price=Number(t.price), fee=Number(t.fee||0);
+    const actual=(t.actualAmount!=null && !isNaN(t.actualAmount)) ? Number(t.actualAmount) : (shares*price+fee);
+    return s+actual;
+  }, 0);
+}
+/** 帳戶額度：所有股票、所有時間的賣出實際入帳總額 */
+function totalSellAmountAll(){
+  return state.transactions.filter(t=>t.type==='sell').reduce((s,t)=>{
+    const shares=Number(t.shares), price=Number(t.price), fee=Number(t.fee||0);
+    const actual=(t.actualAmount!=null && !isNaN(t.actualAmount)) ? Number(t.actualAmount) : (shares*price-fee);
+    return s+actual;
+  }, 0);
+}
+/** 帳戶額度：所有股票、所有時間實際領到的股利總額 */
+function totalDividendsAll(){
+  let total = 0;
+  const codes = Array.from(new Set(state.transactions.map(t=>t.code)));
+  codes.forEach(c=>{
+    const { lots } = buildLots(c);
+    total += dividendsForCode(c, lots, null, null).total;
+  });
+  return total;
+}
+
+/** 取得顯示用現價：自動來源查到的優先，查不到才用使用者手動輸入的備援值 */
+function priceFor(code){
+  if (state.prices[code] && state.prices[code].price != null) return state.prices[code].price;
+  if (state.manualPrices && state.manualPrices[code] != null) return state.manualPrices[code];
+  return null;
+}
+function isManualPrice(code){
+  return !(state.prices[code] && state.prices[code].price != null) &&
+         state.manualPrices && state.manualPrices[code] != null;
+}
+function setManualPrice(code, value){
+  if (value === '' || value === null || isNaN(Number(value))){
+    delete state.manualPrices[code];
+    saveLocal();
+    renderHoldings();
+    renderTicker();
+    return;
+  }
+  const num = Number(value);
+  state.manualPrices[code] = num;
+  saveLocal();
+  renderHoldings();
+  renderTicker();
+  // 若有連接 Google Sheet，把這次手動輸入的現價也記錄到 PriceBoard 分頁，留存查閱
+  if (state.settings.scriptUrl){
+    fetchWithTimeout(state.settings.scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'setManualPrice', payload: { code, price: num, name: codeName(code) || '' } })
+    }, 8000).catch(e=> console.warn('手動股價寫入 Google Sheet 失敗', e));
+  }
+}
+
+function stockSummary(code, includeDividend){
+  const { lots, realized } = buildLots(code);
+  const holding = currentHolding(lots);
+  const price = priceFor(code);
+  const marketValue = price!=null ? holding.shares*price : null;
+  const unrealizedPnl = price!=null ? (marketValue - holding.cost) : null;
+  const realizedAll = realizedForRange(realized, null, null);
+  const divAll = dividendsForCode(code, lots, null, null);
+  const invested = totalInvested(code);
+  let totalPnl = realizedAll.pnl + (unrealizedPnl||0);
+  if (includeDividend) totalPnl += divAll.total;
+  const returnPct = invested>0 ? (totalPnl/invested*100) : null;
+  // 攤平價格：目前持股要用多少成交價賣出，賣出後損益剛好打平（0）
+  // 含息時，已經領到的股利可以折抵成本，需要的賣出價會比較低
+  const breakeven = holding.shares>0
+    ? (holding.cost - (includeDividend ? divAll.total : 0)) / holding.shares
+    : null;
+  return {
+    code, lots, realized, holding, price, marketValue, unrealizedPnl, breakeven,
+    realizedPnl: realizedAll.pnl, dividendTotal: divAll.total, invested, totalPnl, returnPct
+  };
+}
+
+/* ===================== 畫面渲染 ===================== */
+
+/** 把使用者輸入的日期字串（可能是 20260122 或已經是 2026/01/22、2026-01-22）解析成 ISO 格式 YYYY-MM-DD，失敗回傳 null */
+function parseCompactDate(str){
+  if (!str) return null;
+  const digits = String(str).replace(/\D/g, '');
+  if (digits.length !== 8) return null;
+  const y = digits.slice(0,4), m = digits.slice(4,6), d = digits.slice(6,8);
+  const mm = parseInt(m,10), dd = parseInt(d,10), yy = parseInt(y,10);
+  if (yy < 1900 || yy > 2200) return null;
+  if (mm < 1 || mm > 12) return null;
+  if (dd < 1 || dd > 31) return null;
+  return `${y}-${m}-${d}`;
+}
+/** ISO 格式 YYYY-MM-DD 轉成畫面顯示用的 YYYY/MM/DD */
+function formatDateDisplay(iso){
+  if (!iso) return '';
+  return iso.replace(/-/g, '/');
+}
+/** 幫日期輸入欄位加上「輸入8碼數字、離開欄位自動格式化」的行為 */
+function bindCompactDateInput(inputEl){
+  inputEl.addEventListener('blur', ()=>{
+    const iso = parseCompactDate(inputEl.value);
+    if (iso){
+      inputEl.value = formatDateDisplay(iso);
+      inputEl.dataset.iso = iso;
+      inputEl.classList.remove('input-error');
+    } else if (inputEl.value.trim() !== ''){
+      inputEl.classList.add('input-error');
+      delete inputEl.dataset.iso;
+    } else {
+      delete inputEl.dataset.iso;
+    }
+  });
+}
+/** 取得日期輸入欄位目前對應的 ISO 日期（YYYY-MM-DD），供送出表單時使用 */
+function getIsoDateFromInput(inputEl){
+  if (inputEl.dataset.iso) return inputEl.dataset.iso;
+  return parseCompactDate(inputEl.value);
+}
+
+function fmt(n, digits=2){
+  if (n===null || n===undefined || isNaN(n)) return '—';
+  return Number(n).toLocaleString('zh-TW', {minimumFractionDigits:digits, maximumFractionDigits:digits});
+}
+function fmtPct(n){
+  if (n===null || n===undefined || isNaN(n)) return '—';
+  return (n>=0?'+':'') + n.toFixed(2) + '%';
+}
+function pnlClass(n){ return n>0 ? 'pos' : (n<0 ? 'neg':''); }
+function codeName(code){
+  // 優先使用「新增交易紀錄」時使用者輸入/確認過的股票名稱（最近一筆非空值）
+  const txWithName = state.transactions
+    .filter(t=>t.code===code && t.name && t.name.trim())
+    .sort((a,b)=> a.date.localeCompare(b.date));
+  if (txWithName.length > 0) return txWithName[txWithName.length-1].name.trim();
+  const divWithName = state.dividends
+    .filter(d=>d.code===code && d.name && d.name.trim())
+    .sort((a,b)=> a.date.localeCompare(b.date));
+  if (divWithName.length > 0) return divWithName[divWithName.length-1].name.trim();
+  return state.companyNames[code] || (state.prices[code] && state.prices[code].name) || '';
+}
+
+function renderTicker(){
+  const codes = allCodes();
+  const el = document.getElementById('ticker');
+  if (codes.length===0){ el.innerHTML = '<span class="ticker-item">尚無交易紀錄 — 前往「交易紀錄」新增第一筆</span>'; return; }
+  const build = () => codes.map(c=>{
+    const p = state.prices[c];
+    if (!p || p.price==null) return `<span class="ticker-item"><b>${c}</b>${codeName(c)||''} 讀取中…</span>`;
+    const diff = p.prevClose ? (p.price - p.prevClose) : 0;
+    const pct = p.prevClose ? (diff/p.prevClose*100) : 0;
+    const cls = diff>0?'up':(diff<0?'down':'');
+    const arrow = diff>0?'▲':(diff<0?'▼':'‒');
+    return `<span class="ticker-item ${cls}"><b>${c}</b>${p.name||''} ${fmt(p.price,2)} ${arrow}${fmt(Math.abs(diff),2)} (${fmtPct(pct)})</span>`;
+  }).join('');
+  el.innerHTML = build() + build(); // 重複一次做無縫捲動
+}
+
+function renderSummary(){
+  const codes = allCodes().filter(c => state.transactions.some(t=>t.code===c));
+  const includeDividend = state.settings.includeDividend;
+  let invested=0, marketValue=0, realized=0, dividend=0, unrealized=0, hasAllPrices=true;
+  codes.forEach(c=>{
+    const s = stockSummary(c, includeDividend);
+    invested += s.invested;
+    if (s.marketValue!=null) marketValue += s.marketValue; else hasAllPrices=false;
+    realized += s.realizedPnl;
+    dividend += s.dividendTotal;
+    if (s.unrealizedPnl!=null) unrealized += s.unrealizedPnl;
+  });
+  let total = realized + unrealized + (includeDividend?dividend:0);
+  const pct = invested>0 ? total/invested*100 : null;
+  const grid = document.getElementById('summary-grid');
+  grid.innerHTML = `
+    <div class="stat"><div class="label">累積投入成本</div><div class="value mono">${fmt(invested,0)}</div></div>
+    <div class="stat"><div class="label">目前總市值</div><div class="value mono">${fmt(marketValue,0)}</div>${hasAllPrices?'':'<div class="hint">＊部分股票尚未取得現價，數字暫不完整</div>'}</div>
+    <div class="stat"><div class="label">已實現損益</div><div class="value mono ${pnlClass(realized)}">${fmt(realized,0)}</div></div>
+    <div class="stat"><div class="label">累積股利</div><div class="value mono pos">${fmt(dividend,0)}</div></div>
+    <div class="stat"><div class="label">總損益（${includeDividend?'含息':'不含息'}）</div><div class="value mono ${pnlClass(total)}">${fmt(total,0)}</div>${hasAllPrices?'':'<div class="hint">＊未取得現價的部位暫以0計未實現損益</div>'}</div>
+    <div class="stat"><div class="label">總報酬率</div><div class="value mono ${pnlClass(pct)}">${fmtPct(pct)}</div></div>
+  `;
+}
+
+function renderCapitalSummary(){
+  const grid = document.getElementById('capital-summary-grid');
+  if (!grid) return;
+  const initial = state.settings.initialCapital;
+  const buyTotal = totalBuyAmountAll();
+  const sellTotal = totalSellAmountAll();
+  const divTotal = totalDividendsAll();
+  document.getElementById('initial-capital-input').value = initial!=null ? initial : '';
+  if (initial == null || isNaN(initial)){
+    grid.innerHTML = `<div class="stat" style="grid-column:1/-1;"><div class="label">尚未設定原始入金總額</div><div class="hint">輸入後即可看到目前帳戶剩餘可用額度（已自動扣掉買股成本、加回賣股收入與股利）</div></div>`;
+    return;
+  }
+  const remaining = Number(initial) - buyTotal + sellTotal + divTotal;
+  grid.innerHTML = `
+    <div class="stat"><div class="label">原始入金總額</div><div class="value mono">${fmt(initial,0)}</div></div>
+    <div class="stat"><div class="label">累積買進支出</div><div class="value mono neg">${fmt(buyTotal,0)}</div></div>
+    <div class="stat"><div class="label">累積賣出收入</div><div class="value mono pos">${fmt(sellTotal,0)}</div></div>
+    <div class="stat"><div class="label">累積股利收入</div><div class="value mono pos">${fmt(divTotal,0)}</div></div>
+    <div class="stat"><div class="label">帳戶剩餘額度</div><div class="value mono ${pnlClass(remaining)}">${fmt(remaining,0)}</div></div>
+  `;
+}
+
+function renderHoldings(){
+  const includeDividend = state.settings.includeDividend;
+  const codes = allCodes().filter(c=>{
+    const {lots} = buildLots(c);
+    return currentHolding(lots).shares > 0;
+  });
+  const wrap = document.getElementById('holdings-table');
+  if (codes.length===0){
+    wrap.innerHTML = '<div class="empty">目前沒有持倉部位。新增交易紀錄後會顯示在這裡。</div>';
+    renderSummary();
+    return;
+  }
+  let rows = codes.map(c=>{
+    const s = stockSummary(c, includeDividend);
+    const avgCost = s.holding.shares>0 ? s.holding.cost/s.holding.shares : 0;
+    const pnl = (s.unrealizedPnl||0) + (includeDividend? s.dividendTotal : 0);
+    let priceCell;
+    if (s.price != null){
+      const badge = isManualPrice(c) ? '<span class="manual-badge">手動</span>' : '';
+      priceCell = `${fmt(s.price,2)}${badge}`;
+    } else {
+      priceCell = `<input type="number" step="0.01" class="manual-price-input" data-code="${c}" placeholder="手動輸入">`;
+    }
+    let breakevenCell = '—';
+    if (s.breakeven != null){
+      let cls = '';
+      if (s.price != null){
+        cls = s.price >= s.breakeven ? 'pos' : 'neg';
+      }
+      breakevenCell = `<span class="${cls}">${fmt(s.breakeven,2)}</span>`;
+    }
+    return `
+      <tr>
+        <td><div class="name-cell"><span>${codeName(c)||'（未命名）'}</span><span class="code">${c}</span></div></td>
+        <td class="mono">${fmt(s.holding.shares,0)}</td>
+        <td class="mono">${fmt(avgCost,2)}</td>
+        <td class="mono">${fmt(s.holding.cost,0)}</td>
+        <td class="mono">${priceCell}</td>
+        <td class="mono">${breakevenCell}</td>
+        <td class="mono">${s.marketValue!=null?fmt(s.marketValue,0):'—'}</td>
+        <td class="mono pos">${fmt(s.dividendTotal,0)}</td>
+        <td class="mono ${pnlClass(pnl)}">${fmt(pnl,0)}</td>
+        <td class="mono ${pnlClass(s.returnPct)}">${fmtPct(s.returnPct)}</td>
+      </tr>`;
+  }).join('');
+  wrap.innerHTML = `
+    <table>
+      <thead><tr>
+        <th>股票</th><th>持股數(股)</th><th>均價成本</th><th>支出成本</th><th>現價</th><th>攤平價格</th><th>市值</th>
+        <th>期間股利</th><th>損益(${includeDividend?'含息':'不含息'})</th><th>報酬率</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <p class="hint" style="margin-top:8px;">支出成本＝目前持股對應的「實際支出總金額」加總；攤平價格＝以現在的持股數賣出、剛好打平損益所需的成交價（${includeDividend?'已扣除期間領到的股利':'不計股利'}，綠色代表現價已高於攤平價格）。</p>`;
+  wrap.querySelectorAll('.manual-price-input').forEach(inp=>{
+    inp.addEventListener('keydown', e=>{
+      if (e.key === 'Enter'){ e.preventDefault(); setManualPrice(inp.dataset.code, inp.value); }
+    });
+    inp.addEventListener('blur', ()=>{
+      if (inp.value !== '') setManualPrice(inp.dataset.code, inp.value);
+    });
+  });
+  renderSummary();
+}
+
+function renderTxTable(){
+  const wrap = document.getElementById('tx-table');
+  const txs = state.transactions.slice().sort((a,b)=> b.date.localeCompare(a.date));
+  if (txs.length===0){ wrap.innerHTML = '<div class="empty">尚無交易紀錄</div>'; return; }
+  const rows = txs.map(t=>`
+    <tr>
+      <td><div class="name-cell"><span>${t.name||codeName(t.code)||'—'}</span><span class="code">${t.code}</span></div></td>
+      <td>${formatDateDisplay(t.date)}</td>
+      <td><span class="pill ${t.type}">${t.type==='buy'?'買進':'賣出'}</span></td>
+      <td class="mono">${fmt(t.shares,0)}</td>
+      <td class="mono">${fmt(t.price,2)}</td>
+      <td class="mono">${fmt(t.fee,0)}</td>
+      <td>${t.note||''}</td>
+      <td><div class="row-actions">
+        <button class="ghost small" data-edit-tx="${t.id}">編輯</button>
+        <button class="ghost small" data-del-tx="${t.id}">刪除</button>
+      </div></td>
+    </tr>`).join('');
+  wrap.innerHTML = `
+    <table><thead><tr>
+      <th>股票</th><th>日期</th><th>買賣</th><th>股數</th><th>成交價</th><th>手續費</th><th>備註</th><th></th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+  wrap.querySelectorAll('[data-del-tx]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      if (confirm('確定刪除這筆交易紀錄？')) deleteTransaction(btn.dataset.delTx);
+    });
+  });
+  wrap.querySelectorAll('[data-edit-tx]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const t = state.transactions.find(x=>x.id===btn.dataset.editTx);
+      if (t) startEditTx(t);
+    });
+  });
+}
+
+function renderDivTable(){
+  const wrap = document.getElementById('div-table');
+  const divs = state.dividends.slice().sort((a,b)=> b.date.localeCompare(a.date));
+  if (divs.length===0){ wrap.innerHTML = '<div class="empty">尚無股利紀錄</div>'; return; }
+  const rows = divs.map(d=>{
+    const {lots} = buildLots(d.code);
+    let sharesHeld = 0;
+    lots.forEach(lot=>{ if (lot.date <= d.date) sharesHeld += remainingAtDate(lot, d.date); });
+    const amount = sharesHeld * Number(d.amountPerShare);
+    return `
+    <tr>
+      <td><div class="name-cell"><span>${d.name||codeName(d.code)||'—'}</span><span class="code">${d.code}</span></div></td>
+      <td>${formatDateDisplay(d.date)}</td>
+      <td class="mono">${fmt(d.amountPerShare,2)}</td>
+      <td class="mono">${fmt(sharesHeld,0)}</td>
+      <td class="mono pos">${fmt(amount,0)}</td>
+      <td>${d.note||''}</td>
+      <td><div class="row-actions">
+        <button class="ghost small" data-edit-div="${d.id}">編輯</button>
+        <button class="ghost small" data-del-div="${d.id}">刪除</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+  wrap.innerHTML = `
+    <table><thead><tr>
+      <th>股票</th><th>日期</th><th>每股股利</th><th>當時持股數</th><th>領取金額</th><th>備註</th><th></th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+  wrap.querySelectorAll('[data-del-div]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      if (confirm('確定刪除這筆股利紀錄？')) deleteDividend(btn.dataset.delDiv);
+    });
+  });
+  wrap.querySelectorAll('[data-edit-div]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const d = state.dividends.find(x=>x.id===btn.dataset.editDiv);
+      if (d) startEditDiv(d);
+    });
+  });
+}
+
+function renderReport(){
+  const wrap = document.getElementById('report-table');
+  const start = document.getElementById('rep-start').value || null;
+  const end = document.getElementById('rep-end').value || null;
+  const includeDividend = state.settings.includeDividend;
+  const codes = allCodes().filter(c=>state.transactions.some(t=>t.code===c));
+  if (codes.length===0){ wrap.innerHTML = '<div class="empty">尚無資料</div>'; return; }
+
+  let sumRealized=0, sumDiv=0, sumUnreal=0, sumInvested=0;
+  const rows = codes.map(c=>{
+    const { lots, realized } = buildLots(c);
+    const r = realizedForRange(realized, start, end);
+    const d = dividendsForCode(c, lots, start, end);
+    const holding = currentHolding(lots);
+    const price = priceFor(c);
+    const unreal = price!=null ? (holding.shares*price - holding.cost) : 0;
+    const invested = totalInvested(c);
+    const rangeTotal = r.pnl + (includeDividend? d.total : 0);
+    const combined = rangeTotal + unreal;
+    sumRealized += r.pnl; sumDiv += d.total; sumUnreal += unreal; sumInvested += invested;
+    return `
+      <tr>
+        <td><div class="name-cell"><span>${codeName(c)||'—'}</span><span class="code">${c}</span></div></td>
+        <td class="mono ${pnlClass(r.pnl)}">${fmt(r.pnl,0)}</td>
+        <td class="mono pos">${fmt(d.total,0)}</td>
+        <td class="mono ${pnlClass(unreal)}">${fmt(unreal,0)}</td>
+        <td class="mono ${pnlClass(combined)}">${fmt(combined,0)}</td>
+      </tr>`;
+  }).join('');
+  const totalCombined = sumRealized + (includeDividend?sumDiv:0) + sumUnreal;
+  const totalPct = sumInvested>0 ? totalCombined/sumInvested*100 : null;
+  wrap.innerHTML = `
+    <table><thead><tr>
+      <th>股票</th><th>區間已實現損益</th><th>區間股利</th><th>目前未實現損益(不受區間限制)</th><th>合計(${includeDividend?'含息':'不含息'})</th>
+    </tr></thead><tbody>${rows}</tbody>
+    <tfoot><tr style="font-weight:700;">
+      <td>總計</td>
+      <td class="mono ${pnlClass(sumRealized)}">${fmt(sumRealized,0)}</td>
+      <td class="mono pos">${fmt(sumDiv,0)}</td>
+      <td class="mono ${pnlClass(sumUnreal)}">${fmt(sumUnreal,0)}</td>
+      <td class="mono ${pnlClass(totalCombined)}">${fmt(totalCombined,0)}（${fmtPct(totalPct)}）</td>
+    </tr></tfoot>
+    </table>`;
+}
+
+function renderAll(){
+  renderTicker();
+  renderHoldings();
+  renderCapitalSummary();
+  renderTxTable();
+  renderDivTable();
+  renderReport();
+}
+
+document.getElementById('btn-save-capital').addEventListener('click', ()=>{
+  const val = document.getElementById('initial-capital-input').value;
+  state.settings.initialCapital = (val==='' ) ? null : Number(val);
+  saveLocal();
+  renderCapitalSummary();
+});
+
+/* ===================== 事件綁定 ===================== */
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('view-'+btn.dataset.tab).classList.add('active');
+  });
+});
+
+document.getElementById('toggle-dividend').addEventListener('click', function(){
+  state.settings.includeDividend = !state.settings.includeDividend;
+  this.classList.toggle('on', state.settings.includeDividend);
+  saveLocal();
+  renderHoldings();
+  renderReport();
+});
+
+document.getElementById('btn-refresh').addEventListener('click', fetchPrices);
+
+function openSettingsModal(){
+  document.getElementById('setting-url').value = state.settings.scriptUrl || '';
+  document.getElementById('overlay-settings').classList.add('open');
+}
+document.getElementById('btn-settings').addEventListener('click', openSettingsModal);
+document.getElementById('btn-close-settings').addEventListener('click', ()=>{
+  document.getElementById('overlay-settings').classList.remove('open');
+});
+document.getElementById('btn-save-url').addEventListener('click', async ()=>{
+  state.settings.scriptUrl = document.getElementById('setting-url').value.trim();
+  saveLocal();
+  document.getElementById('overlay-settings').classList.remove('open');
+  await syncFromServer();
+});
+document.getElementById('btn-export').addEventListener('click', ()=>{
+  const blob = new Blob([JSON.stringify({
+    transactions: state.transactions, dividends: state.dividends
+  }, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'stock_ledger_backup_' + TODAY + '.json';
+  a.click();
+});
+document.getElementById('btn-import').addEventListener('click', ()=>{
+  document.getElementById('file-import').click();
+});
+document.getElementById('file-import').addEventListener('change', async (e)=>{
+  const file = e.target.files[0];
+  if (!file) return;
+  const text = await file.text();
+  try{
+    const data = JSON.parse(text);
+    state.transactions = (data.transactions||[]).map(normalizeTx);
+    state.dividends = (data.dividends||[]).map(normalizeDiv);
+    saveLocal();
+    renderAll();
+    alert('匯入完成！若有設定雲端網址，請自行按「儲存並同步」上傳。');
+  }catch(err){
+    alert('檔案格式錯誤，無法匯入。');
+  }
+});
+
+document.getElementById('tx-code').addEventListener('blur', (e)=>{
+  lookupNameForCode(e.target.value.trim(), 'tx-name');
+});
+document.getElementById('div-code').addEventListener('blur', (e)=>{
+  lookupNameForCode(e.target.value.trim(), 'div-name');
+});
+bindCompactDateInput(document.getElementById('tx-date'));
+bindCompactDateInput(document.getElementById('div-date'));
+
+function updateActualLabel(){
+  const type = document.getElementById('tx-type').value;
+  const label = document.getElementById('tx-actual-label');
+  const hint = document.getElementById('tx-fee-hint');
+  if (type === 'sell'){
+    label.textContent = '實際入帳總金額（元）';
+    document.getElementById('tx-actual').placeholder = '證券帳戶實際收到的總金額（已扣證交稅、手續費）';
+    hint.textContent = '手續費 = 成交價 × 股數 − 實際入帳總金額（賣出的證交稅請一併算入這裡）';
+  } else {
+    label.textContent = '實際支出總金額（元）';
+    document.getElementById('tx-actual').placeholder = '證券帳戶實際被扣的總金額';
+    hint.textContent = '手續費 = 實際支出總金額 − 成交價 × 股數';
+  }
+}
+function recalcTxFee(){
+  const type = document.getElementById('tx-type').value;
+  const qty = Number(document.getElementById('tx-qty').value) || 0;
+  const price = Number(document.getElementById('tx-price').value) || 0;
+  const actualRaw = document.getElementById('tx-actual').value;
+  if (actualRaw === '') return; // 使用者還沒填實際金額，不覆蓋手動輸入的手續費
+  const actual = Number(actualRaw);
+  const gross = qty * price;
+  const fee = type === 'buy' ? (actual - gross) : (gross - actual);
+  document.getElementById('tx-fee').value = Math.round(fee);
+}
+['tx-qty','tx-price','tx-actual'].forEach(id=>{
+  document.getElementById(id).addEventListener('input', recalcTxFee);
+});
+document.getElementById('tx-type').addEventListener('change', ()=>{ updateActualLabel(); recalcTxFee(); });
+updateActualLabel();
+
+let editingTxId = null;
+let editingDivId = null;
+
+function startEditTx(t){
+  document.getElementById('tx-code').value = t.code;
+  document.getElementById('tx-name').value = t.name || '';
+  document.getElementById('tx-type').value = t.type;
+  const txDateInput = document.getElementById('tx-date');
+  txDateInput.value = formatDateDisplay(t.date);
+  txDateInput.dataset.iso = t.date;
+  txDateInput.classList.remove('input-error');
+  document.getElementById('tx-qty').value = t.shares;
+  document.getElementById('tx-price').value = t.price;
+  document.getElementById('tx-actual').value = (t.actualAmount!=null) ? t.actualAmount : '';
+  document.getElementById('tx-fee').value = t.fee;
+  document.getElementById('tx-note').value = t.note || '';
+  updateActualLabel();
+  editingTxId = t.id;
+  document.getElementById('tx-form-title').textContent = '編輯交易紀錄';
+  document.getElementById('tx-submit-btn').textContent = '更新交易紀錄';
+  document.getElementById('tx-cancel-edit').style.display = 'inline-block';
+  document.querySelector('[data-tab="transactions"]').click();
+  document.getElementById('tx-code').scrollIntoView({behavior:'smooth', block:'center'});
+}
+function cancelEditTx(){
+  editingTxId = null;
+  document.getElementById('form-tx').reset();
+  const txDateInput = document.getElementById('tx-date');
+  delete txDateInput.dataset.iso;
+  txDateInput.classList.remove('input-error');
+  updateActualLabel();
+  document.getElementById('tx-form-title').textContent = '新增交易紀錄';
+  document.getElementById('tx-submit-btn').textContent = '新增交易';
+  document.getElementById('tx-cancel-edit').style.display = 'none';
+}
+
+function startEditDiv(d){
+  document.getElementById('div-code').value = d.code;
+  document.getElementById('div-name').value = d.name || '';
+  const divDateInput = document.getElementById('div-date');
+  divDateInput.value = formatDateDisplay(d.date);
+  divDateInput.dataset.iso = d.date;
+  divDateInput.classList.remove('input-error');
+  document.getElementById('div-amt').value = d.amountPerShare;
+  document.getElementById('div-note').value = d.note || '';
+  editingDivId = d.id;
+  document.getElementById('div-form-title').textContent = '編輯股利／股息紀錄';
+  document.getElementById('div-submit-btn').textContent = '更新股利紀錄';
+  document.getElementById('div-cancel-edit').style.display = 'inline-block';
+  document.querySelector('[data-tab="dividends"]').click();
+  document.getElementById('div-code').scrollIntoView({behavior:'smooth', block:'center'});
+}
+function cancelEditDiv(){
+  editingDivId = null;
+  document.getElementById('form-div').reset();
+  const divDateInput = document.getElementById('div-date');
+  delete divDateInput.dataset.iso;
+  divDateInput.classList.remove('input-error');
+  document.getElementById('div-form-title').textContent = '新增股利／股息紀錄';
+  document.getElementById('div-submit-btn').textContent = '新增股利紀錄';
+  document.getElementById('div-cancel-edit').style.display = 'none';
+}
+document.getElementById('tx-cancel-edit').addEventListener('click', cancelEditTx);
+document.getElementById('div-cancel-edit').addEventListener('click', cancelEditDiv);
+
+document.getElementById('form-tx').addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  recalcTxFee();
+  const txDateInput = document.getElementById('tx-date');
+  const isoDate = getIsoDateFromInput(txDateInput);
+  if (!isoDate){
+    txDateInput.classList.add('input-error');
+    txDateInput.focus();
+    alert('交易日期格式不正確，請輸入8碼數字，例如 20260122');
+    return;
+  }
+  const code = document.getElementById('tx-code').value.trim();
+  const shares = Number(document.getElementById('tx-qty').value);
+  const actualRaw = document.getElementById('tx-actual').value;
+  const tx = {
+    code,
+    name: document.getElementById('tx-name').value.trim(),
+    type: document.getElementById('tx-type').value,
+    date: isoDate,
+    shares,
+    price: Number(document.getElementById('tx-price').value),
+    fee: Number(document.getElementById('tx-fee').value || 0),
+    actualAmount: actualRaw === '' ? null : Number(actualRaw),
+    note: document.getElementById('tx-note').value.trim()
+  };
+  if (editingTxId){
+    tx.id = editingTxId;
+    await updateTransactionRecord(tx);
+    cancelEditTx();
+  } else {
+    await addTransaction(tx);
+    e.target.reset();
+    delete txDateInput.dataset.iso;
+    txDateInput.classList.remove('input-error');
+    updateActualLabel();
+  }
+  fetchPrices();
+});
+
+document.getElementById('form-div').addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const divDateInput = document.getElementById('div-date');
+  const isoDivDate = getIsoDateFromInput(divDateInput);
+  if (!isoDivDate){
+    divDateInput.classList.add('input-error');
+    divDateInput.focus();
+    alert('日期格式不正確，請輸入8碼數字，例如 20260122');
+    return;
+  }
+  const d = {
+    code: document.getElementById('div-code').value.trim(),
+    name: document.getElementById('div-name').value.trim(),
+    date: isoDivDate,
+    amountPerShare: Number(document.getElementById('div-amt').value),
+    note: document.getElementById('div-note').value.trim()
+  };
+  if (editingDivId){
+    d.id = editingDivId;
+    await updateDividendRecord(d);
+    cancelEditDiv();
+  } else {
+    await addDividend(d);
+    e.target.reset();
+    delete divDateInput.dataset.iso;
+    divDateInput.classList.remove('input-error');
+  }
+});
+
+document.getElementById('btn-run-report').addEventListener('click', renderReport);
+
+/* ===================== 初始化 ===================== */
+function setDefaultReportRange(){
+  const dates = state.transactions.map(t=>t.date).filter(Boolean).sort();
+  document.getElementById('rep-start').value = dates[0] || TODAY;
+  document.getElementById('rep-end').value = dates[dates.length-1] || TODAY;
+}
+
+(async function init(){
+  loadLocal();
+  document.getElementById('toggle-dividend').classList.toggle('on', state.settings.includeDividend);
+
+  if (state.settings.scriptUrl){
+    await syncFromServer(); // 會拉回雲端最新資料
+  }
+  // 預設報表區間：交易紀錄中最早 ~ 最晚的日期
+  setDefaultReportRange();
+  renderAll();
+  startPriceLoop();
+})();
+</script>
+</body>
+</html>

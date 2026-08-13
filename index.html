@@ -153,6 +153,9 @@ th{
   text-align:right;font-size:12.5px;color:var(--ink-soft);text-transform:uppercase;
   letter-spacing:.03em;padding:7px 8px;border-bottom:1px solid var(--line);font-weight:600;
 }
+th.sortable-th{cursor:pointer;user-select:none;white-space:nowrap;}
+th.sortable-th:hover{color:var(--ink);}
+th.sort-active{color:var(--accent);}
 th:first-child,td:first-child{text-align:left;}
 td{padding:10px 8px;border-bottom:1px solid #EFEAE0;text-align:right;white-space:nowrap;}
 tr:last-child td{border-bottom:none;}
@@ -264,9 +267,17 @@ footer.note{font-size:12.5px;color:var(--ink-soft);margin-top:6px;line-height:1.
     <div class="card">
       <div class="card-head">
         <h2>目前持倉</h2>
-        <span class="sub">股價每 45 秒自動更新（僅於本頁開啟時）</span>
+        <span class="sub">股價每 45 秒自動更新（僅於本頁開啟時）・點欄位標題可排序</span>
       </div>
       <div id="holdings-table"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>已出脫部位損益</h2>
+        <span class="sub">股數已全部賣出的股票・點欄位標題可排序</span>
+      </div>
+      <div id="closed-table"></div>
     </div>
   </section>
 
@@ -1067,6 +1078,49 @@ function fmtPct(n){
   return (n>=0?'+':'') + n.toFixed(2) + '%';
 }
 function pnlClass(n){ return n>0 ? 'pos' : (n<0 ? 'neg':''); }
+
+/* ---- 通用表格排序機制：持倉／已出脫損益／交易明細／股利明細都共用 ---- */
+const sortState = {
+  holdings: { key: null, dir: 1 },
+  closed:   { key: null, dir: 1 },
+  tx:       { key: 'date', dir: -1 },
+  div:      { key: 'date', dir: -1 }
+};
+/** 產生可點擊排序的表頭 <th>，type: 'text' | 'number'（決定比較方式） */
+function sortableTh(tableName, key, label, type){
+  const st = sortState[tableName];
+  const active = st.key === key;
+  const arrow = active ? (st.dir === 1 ? ' ▲' : ' ▼') : '';
+  return `<th data-sort-key="${key}" data-sort-type="${type||'number'}" class="sortable-th${active?' sort-active':''}">${label}${arrow}</th>`;
+}
+/** 依目前排序狀態排序一組物件陣列。valueFn(row, key) 回傳該欄位用來比較的原始值 */
+function applySort(tableName, rows, valueFn){
+  const st = sortState[tableName];
+  if (!st.key) return rows;
+  const sorted = rows.slice().sort((a,b)=>{
+    let va = valueFn(a, st.key), vb = valueFn(b, st.key);
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    if (typeof va === 'string' || typeof vb === 'string'){
+      return String(va).localeCompare(String(vb), 'zh-Hant') * st.dir;
+    }
+    return (va - vb) * st.dir;
+  });
+  return sorted;
+}
+/** 幫表格容器裡所有可排序表頭綁定點擊事件 */
+function bindSortHandlers(wrapEl, tableName, rerenderFn){
+  wrapEl.querySelectorAll('th[data-sort-key]').forEach(th=>{
+    th.addEventListener('click', ()=>{
+      const key = th.dataset.sortKey;
+      const st = sortState[tableName];
+      if (st.key === key) st.dir *= -1; else { st.key = key; st.dir = 1; }
+      rerenderFn();
+    });
+  });
+}
+
 function codeName(code){
   // 優先使用「新增交易紀錄」時使用者輸入/確認過的股票名稱（最近一筆非空值）
   const txWithName = state.transactions
@@ -1155,10 +1209,28 @@ function renderHoldings(){
     renderSummary();
     return;
   }
-  let rows = codes.map(c=>{
+  let data = codes.map(c=>{
     const s = stockSummary(c, includeDividend);
     const avgCost = s.holding.shares>0 ? s.holding.cost/s.holding.shares : 0;
     const pnl = (s.unrealizedPnl||0) + (includeDividend? s.dividendTotal : 0);
+    return { code:c, name: codeName(c)||'（未命名）', s, avgCost, pnl };
+  });
+  data = applySort('holdings', data, (row,key)=>{
+    switch(key){
+      case 'name': return row.name;
+      case 'shares': return row.s.holding.shares;
+      case 'avgCost': return row.avgCost;
+      case 'cost': return row.s.holding.cost;
+      case 'price': return row.s.price;
+      case 'breakeven': return row.s.breakeven;
+      case 'marketValue': return row.s.marketValue;
+      case 'dividend': return row.s.dividendTotal;
+      case 'pnl': return row.pnl;
+      case 'returnPct': return row.s.returnPct;
+      default: return null;
+    }
+  });
+  let rows = data.map(({code:c, name, s, avgCost, pnl})=>{
     let priceCell;
     if (s.price != null){
       const badge = isManualPrice(c) ? '<span class="manual-badge">手動</span>' : '';
@@ -1176,7 +1248,7 @@ function renderHoldings(){
     }
     return `
       <tr>
-        <td><div class="name-cell"><span>${codeName(c)||'（未命名）'}</span><span class="code">${c}</span></div></td>
+        <td><div class="name-cell"><span>${name}</span><span class="code">${c}</span></div></td>
         <td class="mono">${fmt(s.holding.shares,0)}</td>
         <td class="mono">${fmt(avgCost,2)}</td>
         <td class="mono">${fmt(s.holding.cost,0)}</td>
@@ -1191,8 +1263,16 @@ function renderHoldings(){
   wrap.innerHTML = `
     <table>
       <thead><tr>
-        <th>股票</th><th>持股數(股)</th><th>均價成本</th><th>支出成本</th><th>現價</th><th>攤平價格</th><th>市值</th>
-        <th>期間股利</th><th>損益(${includeDividend?'含息':'不含息'})</th><th>報酬率</th>
+        ${sortableTh('holdings','name','股票','text')}
+        ${sortableTh('holdings','shares','持股數(股)')}
+        ${sortableTh('holdings','avgCost','均價成本')}
+        ${sortableTh('holdings','cost','支出成本')}
+        ${sortableTh('holdings','price','現價')}
+        ${sortableTh('holdings','breakeven','攤平價格')}
+        ${sortableTh('holdings','marketValue','市值')}
+        ${sortableTh('holdings','dividend','期間股利')}
+        ${sortableTh('holdings','pnl',`損益(${includeDividend?'含息':'不含息'})`)}
+        ${sortableTh('holdings','returnPct','報酬率')}
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
@@ -1205,16 +1285,87 @@ function renderHoldings(){
       if (inp.value !== '') setManualPrice(inp.dataset.code, inp.value);
     });
   });
+  bindSortHandlers(wrap, 'holdings', renderHoldings);
   renderSummary();
+}
+
+function renderClosedPositions(){
+  const includeDividend = state.settings.includeDividend;
+  const wrap = document.getElementById('closed-table');
+  if (!wrap) return;
+  const codes = allCodes().filter(c=>{
+    const hasTx = state.transactions.some(t=>t.code===c);
+    if (!hasTx) return false;
+    const { lots } = buildLots(c);
+    return currentHolding(lots).shares === 0;
+  });
+  if (codes.length===0){
+    wrap.innerHTML = '<div class="empty">目前沒有已經全部出脫的股票。</div>';
+    return;
+  }
+  let data = codes.map(c=>{
+    const s = stockSummary(c, includeDividend);
+    const codeTx = state.transactions.filter(t=>t.code===c).sort((a,b)=>a.date.localeCompare(b.date));
+    const firstBuyDate = (codeTx.find(t=>t.type==='buy')||{}).date || codeTx[0].date;
+    const lastSellDate = codeTx.filter(t=>t.type==='sell').sort((a,b)=>b.date.localeCompare(a.date))[0].date;
+    const pnl = s.realizedPnl + (includeDividend ? s.dividendTotal : 0);
+    return { code:c, name: codeName(c)||'（未命名）', s, firstBuyDate, lastSellDate, pnl };
+  });
+  data = applySort('closed', data, (row,key)=>{
+    switch(key){
+      case 'name': return row.name;
+      case 'firstBuyDate': return row.firstBuyDate;
+      case 'lastSellDate': return row.lastSellDate;
+      case 'realizedPnl': return row.s.realizedPnl;
+      case 'dividend': return row.s.dividendTotal;
+      case 'pnl': return row.pnl;
+      case 'returnPct': return row.s.returnPct;
+      default: return null;
+    }
+  });
+  const rows = data.map(({code:c, name, s, firstBuyDate, lastSellDate, pnl})=>`
+    <tr>
+      <td><div class="name-cell"><span>${name}</span><span class="code">${c}</span></div></td>
+      <td>${formatDateDisplay(firstBuyDate)} → ${formatDateDisplay(lastSellDate)}</td>
+      <td class="mono ${pnlClass(s.realizedPnl)}">${fmt(s.realizedPnl,0)}</td>
+      <td class="mono pos">${fmt(s.dividendTotal,0)}</td>
+      <td class="mono ${pnlClass(pnl)}">${fmt(pnl,0)}</td>
+      <td class="mono ${pnlClass(s.returnPct)}">${fmtPct(s.returnPct)}</td>
+    </tr>`).join('');
+  wrap.innerHTML = `
+    <table>
+      <thead><tr>
+        ${sortableTh('closed','name','股票','text')}
+        ${sortableTh('closed','firstBuyDate','持有期間','text')}
+        ${sortableTh('closed','realizedPnl','已實現損益')}
+        ${sortableTh('closed','dividend','持有期間股利')}
+        ${sortableTh('closed','pnl',`總損益(${includeDividend?'含息':'不含息'})`)}
+        ${sortableTh('closed','returnPct','報酬率')}
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  bindSortHandlers(wrap, 'closed', renderClosedPositions);
 }
 
 function renderTxTable(){
   const wrap = document.getElementById('tx-table');
-  const txs = state.transactions.slice().sort((a,b)=> b.date.localeCompare(a.date));
+  let txs = state.transactions.map(t=>({ ...t, displayName: t.name||codeName(t.code)||'—' }));
   if (txs.length===0){ wrap.innerHTML = '<div class="empty">尚無交易紀錄</div>'; return; }
+  txs = applySort('tx', txs, (row,key)=>{
+    switch(key){
+      case 'name': return row.displayName;
+      case 'date': return row.date;
+      case 'type': return row.type;
+      case 'shares': return Number(row.shares);
+      case 'price': return Number(row.price);
+      case 'fee': return Number(row.fee||0);
+      case 'tax': return Number(row.tax||0);
+      default: return null;
+    }
+  });
   const rows = txs.map(t=>`
     <tr>
-      <td><div class="name-cell"><span>${t.name||codeName(t.code)||'—'}</span><span class="code">${t.code}</span></div></td>
+      <td><div class="name-cell"><span>${t.displayName}</span><span class="code">${t.code}</span></div></td>
       <td>${formatDateDisplay(t.date)}</td>
       <td><span class="pill ${t.type}">${t.type==='buy'?'買進':'賣出'}</span></td>
       <td class="mono">${fmt(t.shares,0)}</td>
@@ -1229,7 +1380,14 @@ function renderTxTable(){
     </tr>`).join('');
   wrap.innerHTML = `
     <table><thead><tr>
-      <th>股票</th><th>日期</th><th>買賣</th><th>股數</th><th>成交價</th><th>手續費</th><th>證交稅</th><th>備註</th><th></th>
+      ${sortableTh('tx','name','股票','text')}
+      ${sortableTh('tx','date','日期','text')}
+      ${sortableTh('tx','type','買賣','text')}
+      ${sortableTh('tx','shares','股數')}
+      ${sortableTh('tx','price','成交價')}
+      ${sortableTh('tx','fee','手續費')}
+      ${sortableTh('tx','tax','證交稅')}
+      <th>備註</th><th></th>
     </tr></thead><tbody>${rows}</tbody></table>`;
   wrap.querySelectorAll('[data-del-tx]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
@@ -1242,34 +1400,50 @@ function renderTxTable(){
       if (t) startEditTx(t);
     });
   });
+  bindSortHandlers(wrap, 'tx', renderTxTable);
 }
 
 function renderDivTable(){
   const wrap = document.getElementById('div-table');
-  const divs = state.dividends.slice().sort((a,b)=> b.date.localeCompare(a.date));
-  if (divs.length===0){ wrap.innerHTML = '<div class="empty">尚無股利紀錄</div>'; return; }
-  const rows = divs.map(d=>{
+  let divs = state.dividends.map(d=>{
     const {lots} = buildLots(d.code);
     let sharesHeld = 0;
     lots.forEach(lot=>{ if (lot.date <= d.date) sharesHeld += remainingAtDate(lot, d.date); });
     const amount = sharesHeld * Number(d.amountPerShare);
-    return `
+    return { ...d, displayName: d.name||codeName(d.code)||'—', sharesHeld, amount };
+  });
+  if (divs.length===0){ wrap.innerHTML = '<div class="empty">尚無股利紀錄</div>'; return; }
+  divs = applySort('div', divs, (row,key)=>{
+    switch(key){
+      case 'name': return row.displayName;
+      case 'date': return row.date;
+      case 'amountPerShare': return Number(row.amountPerShare);
+      case 'sharesHeld': return row.sharesHeld;
+      case 'amount': return row.amount;
+      default: return null;
+    }
+  });
+  const rows = divs.map(d=>`
     <tr>
-      <td><div class="name-cell"><span>${d.name||codeName(d.code)||'—'}</span><span class="code">${d.code}</span></div></td>
+      <td><div class="name-cell"><span>${d.displayName}</span><span class="code">${d.code}</span></div></td>
       <td>${formatDateDisplay(d.date)}</td>
       <td class="mono">${fmt(d.amountPerShare,2)}</td>
-      <td class="mono">${fmt(sharesHeld,0)}</td>
-      <td class="mono pos">${fmt(amount,0)}</td>
+      <td class="mono">${fmt(d.sharesHeld,0)}</td>
+      <td class="mono pos">${fmt(d.amount,0)}</td>
       <td>${d.note||''}</td>
       <td><div class="row-actions">
         <button class="ghost small" data-edit-div="${d.id}">編輯</button>
         <button class="ghost small" data-del-div="${d.id}">刪除</button>
       </div></td>
-    </tr>`;
-  }).join('');
+    </tr>`).join('');
   wrap.innerHTML = `
     <table><thead><tr>
-      <th>股票</th><th>日期</th><th>每股股利</th><th>當時持股數</th><th>領取金額</th><th>備註</th><th></th>
+      ${sortableTh('div','name','股票','text')}
+      ${sortableTh('div','date','日期','text')}
+      ${sortableTh('div','amountPerShare','每股股利')}
+      ${sortableTh('div','sharesHeld','當時持股數')}
+      ${sortableTh('div','amount','領取金額')}
+      <th>備註</th><th></th>
     </tr></thead><tbody>${rows}</tbody></table>`;
   wrap.querySelectorAll('[data-del-div]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
@@ -1282,6 +1456,23 @@ function renderDivTable(){
       if (d) startEditDiv(d);
     });
   });
+  bindSortHandlers(wrap, 'div', renderDivTable);
+}
+
+/** 計算某股票在指定日期區間內，所有交易（買+賣）產生的手續費與證交稅總和 */
+function feeTaxForRange(code, rangeStart, rangeEnd){
+  return state.transactions
+    .filter(t=>t.code===code)
+    .filter(t=>{
+      if (rangeStart && t.date < rangeStart) return false;
+      if (rangeEnd && t.date > rangeEnd) return false;
+      return true;
+    })
+    .reduce((acc,t)=>{
+      acc.fee += Number(t.fee||0);
+      acc.tax += Number(t.tax||0);
+      return acc;
+    }, { fee:0, tax:0 });
 }
 
 function renderReport(){
@@ -1292,11 +1483,12 @@ function renderReport(){
   const codes = allCodes().filter(c=>state.transactions.some(t=>t.code===c));
   if (codes.length===0){ wrap.innerHTML = '<div class="empty">尚無資料</div>'; return; }
 
-  let sumRealized=0, sumDiv=0, sumUnreal=0, sumInvested=0;
+  let sumRealized=0, sumDiv=0, sumUnreal=0, sumInvested=0, sumFee=0, sumTax=0;
   const rows = codes.map(c=>{
     const { lots, realized } = buildLots(c);
     const r = realizedForRange(realized, start, end);
     const d = dividendsForCode(c, lots, start, end);
+    const ft = feeTaxForRange(c, start, end);
     const holding = currentHolding(lots);
     const price = priceFor(c);
     const unreal = price!=null ? (holding.shares*price - holding.cost) : 0;
@@ -1304,11 +1496,14 @@ function renderReport(){
     const rangeTotal = r.pnl + (includeDividend? d.total : 0);
     const combined = rangeTotal + unreal;
     sumRealized += r.pnl; sumDiv += d.total; sumUnreal += unreal; sumInvested += invested;
+    sumFee += ft.fee; sumTax += ft.tax;
     return `
       <tr>
         <td><div class="name-cell"><span>${codeName(c)||'—'}</span><span class="code">${c}</span></div></td>
         <td class="mono ${pnlClass(r.pnl)}">${fmt(r.pnl,0)}</td>
         <td class="mono pos">${fmt(d.total,0)}</td>
+        <td class="mono">${fmt(ft.fee,0)}</td>
+        <td class="mono">${fmt(ft.tax,0)}</td>
         <td class="mono ${pnlClass(unreal)}">${fmt(unreal,0)}</td>
         <td class="mono ${pnlClass(combined)}">${fmt(combined,0)}</td>
       </tr>`;
@@ -1317,21 +1512,25 @@ function renderReport(){
   const totalPct = sumInvested>0 ? totalCombined/sumInvested*100 : null;
   wrap.innerHTML = `
     <table><thead><tr>
-      <th>股票</th><th>區間已實現損益</th><th>區間股利</th><th>目前未實現損益(不受區間限制)</th><th>合計(${includeDividend?'含息':'不含息'})</th>
+      <th>股票</th><th>區間已實現損益</th><th>區間股利</th><th>區間手續費</th><th>區間證交稅</th><th>目前未實現損益(不受區間限制)</th><th>合計(${includeDividend?'含息':'不含息'})</th>
     </tr></thead><tbody>${rows}</tbody>
     <tfoot><tr style="font-weight:700;">
       <td>總計</td>
       <td class="mono ${pnlClass(sumRealized)}">${fmt(sumRealized,0)}</td>
       <td class="mono pos">${fmt(sumDiv,0)}</td>
+      <td class="mono">${fmt(sumFee,0)}</td>
+      <td class="mono">${fmt(sumTax,0)}</td>
       <td class="mono ${pnlClass(sumUnreal)}">${fmt(sumUnreal,0)}</td>
       <td class="mono ${pnlClass(totalCombined)}">${fmt(totalCombined,0)}（${fmtPct(totalPct)}）</td>
     </tr></tfoot>
-    </table>`;
+    </table>
+    <p class="hint" style="margin-top:8px;">區間手續費／證交稅＝該股票在選定日期範圍內，所有買進＋賣出交易的手續費與證交稅加總（不影響已實現損益的計算，已實現損益本身已經扣除這些成本，這裡只是讓你單獨檢視花了多少錢在交易成本上）。</p>`;
 }
 
 function renderAll(){
   renderTicker();
   renderHoldings();
+  renderClosedPositions();
   renderCapitalSummary();
   renderTxTable();
   renderDivTable();

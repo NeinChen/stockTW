@@ -394,6 +394,18 @@ footer.note{font-size:12.5px;color:var(--ink-soft);margin-top:6px;line-height:1.
     <div class="card">
       <div class="card-head">
         <h2>自訂區間損益</h2>
+        <div style="display:flex;gap:18px;flex-wrap:wrap;">
+          <div class="toggle-row">
+            <span>不含息</span>
+            <div class="switch on" id="toggle-report-dividend"></div>
+            <span>含息</span>
+          </div>
+          <div class="toggle-row">
+            <span>不含手續費/稅</span>
+            <div class="switch on" id="toggle-report-feetax"></div>
+            <span>含手續費/稅</span>
+          </div>
+        </div>
       </div>
       <div class="form-grid" style="margin-bottom:14px;">
         <div><label>開始日期</label><input type="date" id="rep-start"></div>
@@ -401,7 +413,7 @@ footer.note{font-size:12.5px;color:var(--ink-soft);margin-top:6px;line-height:1.
         <div><button id="btn-run-report" type="button">計算</button></div>
       </div>
       <div class="banner">
-        區間內「已實現損益」與「股利」會依你選擇的日期範圍計算；「未實現損益」固定以<b>目前市價</b>估算（不會隨區間切分），並在下表分開列出。
+        區間內「已實現損益」與「股利」會依你選擇的日期範圍計算；「未實現損益」固定以<b>目前市價</b>估算（不會隨區間切分），並在下表分開列出。上方兩個開關可以切換「合計」是否計入股利、手續費與證交稅成本。
       </div>
       <div id="report-table"></div>
     </div>
@@ -437,7 +449,7 @@ const LOCAL_KEY = 'stock_ledger_v1';
 let state = {
   transactions: [],
   dividends: [],
-  settings: { scriptUrl: '', includeDividend: true, initialCapital: null },
+  settings: { scriptUrl: '', includeDividend: true, initialCapital: null, reportIncludeDividend: true, reportIncludeFeeTax: true },
   prices: {},       // code -> {price, prevClose, name, time}
   manualPrices: {}, // code -> 使用者手動輸入的現價（所有自動來源都查不到時的備援，暫存在本機）
   companyNames: {}  // code -> name
@@ -891,14 +903,15 @@ function remainingAtDate(lot, dateStr){
 
 const TODAY = new Date().toISOString().slice(0,10);
 
-function currentHolding(lots, asOfDate){
+function currentHolding(lots, asOfDate, includeFeeTax){
   asOfDate = asOfDate || TODAY;
+  includeFeeTax = includeFeeTax !== false; // 預設 true（含手續費/證交稅的實際成本）
   let shares = 0, cost = 0;
   lots.forEach(lot=>{
     const rem = remainingAtDate(lot, asOfDate);
     if (rem > 0){
       shares += rem;
-      cost += lot.actualAmount * (rem/lot.shares);
+      cost += includeFeeTax ? (lot.actualAmount * (rem/lot.shares)) : (lot.price * rem);
     }
   });
   return { shares, cost };
@@ -922,24 +935,34 @@ function dividendsForCode(code, lots, rangeStart, rangeEnd){
   return { total, details };
 }
 
-function realizedForRange(realized, rangeStart, rangeEnd){
+function realizedForRange(realized, rangeStart, rangeEnd, includeFeeTax){
+  includeFeeTax = includeFeeTax !== false; // 預設 true（含手續費/證交稅的實際損益）
   let pnl=0, proceeds=0, costBasis=0;
   realized.forEach(r=>{
     if (rangeStart && r.sellDate < rangeStart) return;
     if (rangeEnd && r.sellDate > rangeEnd) return;
-    const buyCost = r.buyActualAlloc!=null ? r.buyActualAlloc : (r.shares*r.buyPrice + r.buyFeeAlloc);
-    const sellRev = r.sellActualAlloc!=null ? r.sellActualAlloc : (r.shares*r.sellPrice - r.sellFeeAlloc - (r.sellTaxAlloc||0));
+    let buyCost, sellRev;
+    if (includeFeeTax){
+      buyCost = r.buyActualAlloc!=null ? r.buyActualAlloc : (r.shares*r.buyPrice + r.buyFeeAlloc);
+      sellRev = r.sellActualAlloc!=null ? r.sellActualAlloc : (r.shares*r.sellPrice - r.sellFeeAlloc - (r.sellTaxAlloc||0));
+    } else {
+      // 不含手續費/證交稅：純粹用成交價 × 股數計算，忽略所有交易成本
+      buyCost = r.shares * r.buyPrice;
+      sellRev = r.shares * r.sellPrice;
+    }
     pnl += (sellRev - buyCost);
     proceeds += sellRev; costBasis += buyCost;
   });
   return { pnl, proceeds, costBasis };
 }
 
-function totalInvested(code){
+function totalInvested(code, includeFeeTax){
+  includeFeeTax = includeFeeTax !== false;
   return state.transactions
     .filter(t=>t.code===code && t.type==='buy')
     .reduce((s,t)=>{
       const shares = Number(t.shares), price = Number(t.price), fee = Number(t.fee||0), tax = Number(t.tax||0);
+      if (!includeFeeTax) return s + shares*price;
       const actualAmount = (t.actualAmount!=null && !isNaN(t.actualAmount)) ? Number(t.actualAmount) : (shares*price+fee+tax);
       return s + actualAmount;
     }, 0);
@@ -1479,20 +1502,21 @@ function renderReport(){
   const wrap = document.getElementById('report-table');
   const start = document.getElementById('rep-start').value || null;
   const end = document.getElementById('rep-end').value || null;
-  const includeDividend = state.settings.includeDividend;
+  const includeDividend = state.settings.reportIncludeDividend;
+  const includeFeeTax = state.settings.reportIncludeFeeTax;
   const codes = allCodes().filter(c=>state.transactions.some(t=>t.code===c));
   if (codes.length===0){ wrap.innerHTML = '<div class="empty">尚無資料</div>'; return; }
 
   let sumRealized=0, sumDiv=0, sumUnreal=0, sumInvested=0, sumFee=0, sumTax=0;
   const rows = codes.map(c=>{
     const { lots, realized } = buildLots(c);
-    const r = realizedForRange(realized, start, end);
+    const r = realizedForRange(realized, start, end, includeFeeTax);
     const d = dividendsForCode(c, lots, start, end);
     const ft = feeTaxForRange(c, start, end);
-    const holding = currentHolding(lots);
+    const holding = currentHolding(lots, null, includeFeeTax);
     const price = priceFor(c);
     const unreal = price!=null ? (holding.shares*price - holding.cost) : 0;
-    const invested = totalInvested(c);
+    const invested = totalInvested(c, includeFeeTax);
     const rangeTotal = r.pnl + (includeDividend? d.total : 0);
     const combined = rangeTotal + unreal;
     sumRealized += r.pnl; sumDiv += d.total; sumUnreal += unreal; sumInvested += invested;
@@ -1512,7 +1536,7 @@ function renderReport(){
   const totalPct = sumInvested>0 ? totalCombined/sumInvested*100 : null;
   wrap.innerHTML = `
     <table><thead><tr>
-      <th>股票</th><th>區間已實現損益</th><th>區間股利</th><th>區間手續費</th><th>區間證交稅</th><th>目前未實現損益(不受區間限制)</th><th>合計(${includeDividend?'含息':'不含息'})</th>
+      <th>股票</th><th>區間已實現損益</th><th>區間股利</th><th>區間手續費</th><th>區間證交稅</th><th>目前未實現損益(不受區間限制)</th><th>合計(${includeDividend?'含息':'不含息'}・${includeFeeTax?'含':'不含'}手續費/稅)</th>
     </tr></thead><tbody>${rows}</tbody>
     <tfoot><tr style="font-weight:700;">
       <td>總計</td>
@@ -1524,7 +1548,7 @@ function renderReport(){
       <td class="mono ${pnlClass(totalCombined)}">${fmt(totalCombined,0)}（${fmtPct(totalPct)}）</td>
     </tr></tfoot>
     </table>
-    <p class="hint" style="margin-top:8px;">區間手續費／證交稅＝該股票在選定日期範圍內，所有買進＋賣出交易的手續費與證交稅加總（不影響已實現損益的計算，已實現損益本身已經扣除這些成本，這裡只是讓你單獨檢視花了多少錢在交易成本上）。</p>`;
+    <p class="hint" style="margin-top:8px;">「區間手續費／證交稅」欄位固定顯示實際加總金額，僅供檢視；「合計」是否把這些成本算進損益，則由上方「含/不含手續費/稅」開關決定——開啟時合計已經是扣除手續費與證交稅後的實際損益，關閉時合計會用「純成交價 × 股數」計算，忽略所有交易成本（可以用來比較「有無交易成本」對報酬率的影響）。</p>`;
 }
 
 function renderAll(){
@@ -1559,6 +1583,18 @@ document.getElementById('toggle-dividend').addEventListener('click', function(){
   this.classList.toggle('on', state.settings.includeDividend);
   saveLocal();
   renderHoldings();
+});
+
+document.getElementById('toggle-report-dividend').addEventListener('click', function(){
+  state.settings.reportIncludeDividend = !state.settings.reportIncludeDividend;
+  this.classList.toggle('on', state.settings.reportIncludeDividend);
+  saveLocal();
+  renderReport();
+});
+document.getElementById('toggle-report-feetax').addEventListener('click', function(){
+  state.settings.reportIncludeFeeTax = !state.settings.reportIncludeFeeTax;
+  this.classList.toggle('on', state.settings.reportIncludeFeeTax);
+  saveLocal();
   renderReport();
 });
 
@@ -1815,6 +1851,8 @@ function setDefaultReportRange(){
 (async function init(){
   loadLocal();
   document.getElementById('toggle-dividend').classList.toggle('on', state.settings.includeDividend);
+  document.getElementById('toggle-report-dividend').classList.toggle('on', state.settings.reportIncludeDividend);
+  document.getElementById('toggle-report-feetax').classList.toggle('on', state.settings.reportIncludeFeeTax);
 
   if (state.settings.scriptUrl){
     await syncFromServer(); // 會拉回雲端最新資料

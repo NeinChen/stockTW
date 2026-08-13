@@ -657,6 +657,14 @@ async function lookupNameForCode(code, targetInputId){
     document.getElementById(targetInputId).value = state.companyNames[code];
     return;
   }
+  // 0) 先看你之前是不是已經在其他交易/股利紀錄手動輸入過這檔股票的名稱，有的話直接帶出來，不用再查外部來源
+  const knownName = codeName(code);
+  if (knownName){
+    document.getElementById(targetInputId).value = knownName;
+    state.companyNames[code] = knownName; // 順便快取起來，之後更快
+    saveLocal();
+    return;
+  }
   // 1) 先試即時股價 API 單檔查詢（上市/上櫃都試，順便拿到即時價）
   const okViaLive = await fetchSingleQuoteViaMis(code);
   if (okViaLive && state.companyNames[code]){

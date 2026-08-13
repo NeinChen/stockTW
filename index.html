@@ -297,7 +297,7 @@ footer.note{font-size:12.5px;color:var(--ink-soft);margin-top:6px;line-height:1.
         </div>
         <div>
           <label>股數</label>
-          <input type="number" id="tx-qty" min="0" step="1" required placeholder="例如 1000">
+          <input type="number" id="tx-qty" min="0" step="1" required placeholder="例如 1000" value="1000">
         </div>
         <div>
           <label>成交價 (元/股，2位小數)</label>
@@ -308,11 +308,18 @@ footer.note{font-size:12.5px;color:var(--ink-soft);margin-top:6px;line-height:1.
           <input type="number" id="tx-actual" min="0" step="1" placeholder="帳戶實際被扣的總金額">
         </div>
         <div>
-          <label>手續費/稅（自動計算，可手動覆蓋）</label>
+          <label>券商手續費（自動計算，可手動覆蓋）</label>
           <input type="number" id="tx-fee" step="1" value="0">
         </div>
+        <div>
+          <label id="tx-tax-label">證券交易稅（自動試算，可手動覆蓋）</label>
+          <input type="number" id="tx-tax" step="1" value="0">
+        </div>
         <div class="full">
-          <span class="hint" id="tx-fee-hint">手續費 = 實際支出總金額 − 成交價 × 股數（買進填「實際支出」，賣出填「實際入帳金額」，證交稅請一併算進去）</span>
+          <span class="hint" id="tx-fee-hint">券商手續費 = 實際支出總金額 − 成交價 × 股數 − 證交稅（買進填「實際支出」，賣出填「實際入帳金額」）</span>
+        </div>
+        <div class="full">
+          <span class="hint" id="tx-tax-hint">依台灣現行法規，證券交易稅只有「賣出」股票時課徵，稅率為成交金額的 0.3%（千分之3），系統會自動幫你試算；買進不課稅、ETF／當沖等特殊稅率請自行修改這一格。</span>
         </div>
         <div class="full">
           <label>備註（選填）</label>
@@ -502,6 +509,7 @@ function normalizeTx(t){
     id: t.id, code: String(t.code), name: t.name || '', date: t.date,
     type: t.type, shares: Number(t.shares), price: Number(t.price),
     fee: Number(t.fee||0),
+    tax: (t.tax===''||t.tax===undefined||t.tax===null) ? 0 : Number(t.tax),
     actualAmount: (t.actualAmount===''||t.actualAmount===undefined||t.actualAmount===null) ? null : Number(t.actualAmount),
     note: t.note || ''
   };
@@ -826,14 +834,19 @@ function buildLots(code){
     const shares = Number(t.shares);
     if (t.type === 'buy'){
       const fee = Number(t.fee||0);
+      const tax = Number(t.tax||0); // 台灣買進不課證交稅，一般為0，但欄位仍保留彈性
       const price = Number(t.price);
-      // 成本優先使用使用者輸入的「實際支出總金額」；沒填的話用 成交價×股數+手續費 計算（結果應相同）
-      const actualAmount = (t.actualAmount!=null && !isNaN(t.actualAmount)) ? Number(t.actualAmount) : (shares*price + fee);
-      lots.push({ date:t.date, shares, price, fee, actualAmount, consumptions:[] });
+      // 成本優先使用使用者輸入的「實際支出總金額」；沒填的話用 成交價×股數+手續費+證交稅 計算（結果應相同）
+      const actualAmount = (t.actualAmount!=null && !isNaN(t.actualAmount)) ? Number(t.actualAmount) : (shares*price + fee + tax);
+      lots.push({ date:t.date, shares, price, fee, tax, actualAmount, consumptions:[] });
     } else if (t.type === 'sell'){
       let remain = shares;
       const sellFeeTotal = Number(t.fee||0);
+      const sellTaxTotal = Number(t.tax||0); // 證交稅：賣出成交金額 × 0.3%（法定稅率，可手動覆蓋）
       const sellPrice = Number(t.price);
+      const gross = shares*sellPrice;
+      // 賣出實際入帳金額優先使用使用者輸入值；沒填的話用 成交價×股數−手續費−證交稅 回推
+      const sellActualAmount = (t.actualAmount!=null && !isNaN(t.actualAmount)) ? Number(t.actualAmount) : (gross - sellFeeTotal - sellTaxTotal);
       for (const lot of lots){
         if (remain <= 0) break;
         const lotUsed = lot.consumptions.reduce((s,c)=>s+c.shares,0);
@@ -844,9 +857,12 @@ function buildLots(code){
         const buyFeeAlloc = lot.fee * (take/lot.shares);
         const buyActualAlloc = lot.actualAmount * (take/lot.shares);
         const sellFeeAlloc = sellFeeTotal * (take/shares);
+        const sellTaxAlloc = sellTaxTotal * (take/shares);
+        const sellActualAlloc = sellActualAmount * (take/shares);
         realized.push({
           buyDate: lot.date, sellDate: t.date, shares: take,
-          buyPrice: lot.price, buyFeeAlloc, buyActualAlloc, sellPrice, sellFeeAlloc
+          buyPrice: lot.price, buyFeeAlloc, buyActualAlloc,
+          sellPrice, sellFeeAlloc, sellTaxAlloc, sellActualAlloc
         });
         remain -= take;
       }
@@ -901,7 +917,7 @@ function realizedForRange(realized, rangeStart, rangeEnd){
     if (rangeStart && r.sellDate < rangeStart) return;
     if (rangeEnd && r.sellDate > rangeEnd) return;
     const buyCost = r.buyActualAlloc!=null ? r.buyActualAlloc : (r.shares*r.buyPrice + r.buyFeeAlloc);
-    const sellRev = r.shares*r.sellPrice - r.sellFeeAlloc;
+    const sellRev = r.sellActualAlloc!=null ? r.sellActualAlloc : (r.shares*r.sellPrice - r.sellFeeAlloc - (r.sellTaxAlloc||0));
     pnl += (sellRev - buyCost);
     proceeds += sellRev; costBasis += buyCost;
   });
@@ -912,8 +928,8 @@ function totalInvested(code){
   return state.transactions
     .filter(t=>t.code===code && t.type==='buy')
     .reduce((s,t)=>{
-      const shares = Number(t.shares), price = Number(t.price), fee = Number(t.fee||0);
-      const actualAmount = (t.actualAmount!=null && !isNaN(t.actualAmount)) ? Number(t.actualAmount) : (shares*price+fee);
+      const shares = Number(t.shares), price = Number(t.price), fee = Number(t.fee||0), tax = Number(t.tax||0);
+      const actualAmount = (t.actualAmount!=null && !isNaN(t.actualAmount)) ? Number(t.actualAmount) : (shares*price+fee+tax);
       return s + actualAmount;
     }, 0);
 }
@@ -921,16 +937,16 @@ function totalInvested(code){
 /** 帳戶額度：所有股票、所有時間的買進實際支出總額 */
 function totalBuyAmountAll(){
   return state.transactions.filter(t=>t.type==='buy').reduce((s,t)=>{
-    const shares=Number(t.shares), price=Number(t.price), fee=Number(t.fee||0);
-    const actual=(t.actualAmount!=null && !isNaN(t.actualAmount)) ? Number(t.actualAmount) : (shares*price+fee);
+    const shares=Number(t.shares), price=Number(t.price), fee=Number(t.fee||0), tax=Number(t.tax||0);
+    const actual=(t.actualAmount!=null && !isNaN(t.actualAmount)) ? Number(t.actualAmount) : (shares*price+fee+tax);
     return s+actual;
   }, 0);
 }
-/** 帳戶額度：所有股票、所有時間的賣出實際入帳總額 */
+/** 帳戶額度：所有股票、所有時間的賣出實際入帳總額（已扣手續費與證交稅） */
 function totalSellAmountAll(){
   return state.transactions.filter(t=>t.type==='sell').reduce((s,t)=>{
-    const shares=Number(t.shares), price=Number(t.price), fee=Number(t.fee||0);
-    const actual=(t.actualAmount!=null && !isNaN(t.actualAmount)) ? Number(t.actualAmount) : (shares*price-fee);
+    const shares=Number(t.shares), price=Number(t.price), fee=Number(t.fee||0), tax=Number(t.tax||0);
+    const actual=(t.actualAmount!=null && !isNaN(t.actualAmount)) ? Number(t.actualAmount) : (shares*price-fee-tax);
     return s+actual;
   }, 0);
 }
@@ -1204,6 +1220,7 @@ function renderTxTable(){
       <td class="mono">${fmt(t.shares,0)}</td>
       <td class="mono">${fmt(t.price,2)}</td>
       <td class="mono">${fmt(t.fee,0)}</td>
+      <td class="mono">${fmt(t.tax||0,0)}</td>
       <td>${t.note||''}</td>
       <td><div class="row-actions">
         <button class="ghost small" data-edit-tx="${t.id}">編輯</button>
@@ -1212,7 +1229,7 @@ function renderTxTable(){
     </tr>`).join('');
   wrap.innerHTML = `
     <table><thead><tr>
-      <th>股票</th><th>日期</th><th>買賣</th><th>股數</th><th>成交價</th><th>手續費</th><th>備註</th><th></th>
+      <th>股票</th><th>日期</th><th>買賣</th><th>股數</th><th>成交價</th><th>手續費</th><th>證交稅</th><th>備註</th><th></th>
     </tr></thead><tbody>${rows}</tbody></table>`;
   wrap.querySelectorAll('[data-del-tx]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
@@ -1399,31 +1416,49 @@ document.getElementById('div-code').addEventListener('blur', (e)=>{
 bindCompactDateInput(document.getElementById('tx-date'));
 bindCompactDateInput(document.getElementById('div-date'));
 
+const TW_SELL_TAX_RATE = 0.003; // 台灣證券交易稅：賣出千分之3（買進不課稅）
+let txTaxTouched = false; // 使用者是否手動改過證交稅欄位（改過就不要再自動覆蓋）
+
+function suggestTax(){
+  if (document.getElementById('tx-type').value !== 'sell') return;
+  const qty = Number(document.getElementById('tx-qty').value) || 0;
+  const price = Number(document.getElementById('tx-price').value) || 0;
+  document.getElementById('tx-tax').value = Math.round(qty * price * TW_SELL_TAX_RATE);
+}
+
 function updateActualLabel(){
   const type = document.getElementById('tx-type').value;
   const label = document.getElementById('tx-actual-label');
   const hint = document.getElementById('tx-fee-hint');
+  const taxInput = document.getElementById('tx-tax');
   if (type === 'sell'){
     label.textContent = '實際入帳總金額（元）';
     document.getElementById('tx-actual').placeholder = '證券帳戶實際收到的總金額（已扣證交稅、手續費）';
-    hint.textContent = '手續費 = 成交價 × 股數 − 實際入帳總金額（賣出的證交稅請一併算入這裡）';
+    hint.textContent = '券商手續費 = 成交價 × 股數 − 實際入帳總金額 − 證交稅';
+    taxInput.disabled = false;
+    if (!txTaxTouched) suggestTax();
   } else {
     label.textContent = '實際支出總金額（元）';
     document.getElementById('tx-actual').placeholder = '證券帳戶實際被扣的總金額';
-    hint.textContent = '手續費 = 實際支出總金額 − 成交價 × 股數';
+    hint.textContent = '券商手續費 = 實際支出總金額 − 成交價 × 股數（買進不課證交稅）';
+    taxInput.value = 0;
+    taxInput.disabled = true;
   }
 }
 function recalcTxFee(){
   const type = document.getElementById('tx-type').value;
   const qty = Number(document.getElementById('tx-qty').value) || 0;
   const price = Number(document.getElementById('tx-price').value) || 0;
+  if (type === 'sell' && !txTaxTouched) suggestTax();
+  const tax = type === 'sell' ? (Number(document.getElementById('tx-tax').value) || 0) : 0;
   const actualRaw = document.getElementById('tx-actual').value;
   if (actualRaw === '') return; // 使用者還沒填實際金額，不覆蓋手動輸入的手續費
   const actual = Number(actualRaw);
   const gross = qty * price;
-  const fee = type === 'buy' ? (actual - gross) : (gross - actual);
+  const fee = type === 'buy' ? (actual - gross) : (gross - tax - actual);
   document.getElementById('tx-fee').value = Math.round(fee);
 }
+document.getElementById('tx-tax').addEventListener('input', ()=>{ txTaxTouched = true; recalcTxFee(); });
 ['tx-qty','tx-price','tx-actual'].forEach(id=>{
   document.getElementById(id).addEventListener('input', recalcTxFee);
 });
@@ -1445,6 +1480,8 @@ function startEditTx(t){
   document.getElementById('tx-price').value = t.price;
   document.getElementById('tx-actual').value = (t.actualAmount!=null) ? t.actualAmount : '';
   document.getElementById('tx-fee').value = t.fee;
+  txTaxTouched = true; // 已有既有資料，不要被自動試算覆蓋
+  document.getElementById('tx-tax').value = t.tax!=null ? t.tax : 0;
   document.getElementById('tx-note').value = t.note || '';
   updateActualLabel();
   editingTxId = t.id;
@@ -1460,6 +1497,7 @@ function cancelEditTx(){
   const txDateInput = document.getElementById('tx-date');
   delete txDateInput.dataset.iso;
   txDateInput.classList.remove('input-error');
+  txTaxTouched = false;
   updateActualLabel();
   document.getElementById('tx-form-title').textContent = '新增交易紀錄';
   document.getElementById('tx-submit-btn').textContent = '新增交易';
@@ -1509,14 +1547,16 @@ document.getElementById('form-tx').addEventListener('submit', async (e)=>{
   const code = document.getElementById('tx-code').value.trim();
   const shares = Number(document.getElementById('tx-qty').value);
   const actualRaw = document.getElementById('tx-actual').value;
+  const type = document.getElementById('tx-type').value;
   const tx = {
     code,
     name: document.getElementById('tx-name').value.trim(),
-    type: document.getElementById('tx-type').value,
+    type,
     date: isoDate,
     shares,
     price: Number(document.getElementById('tx-price').value),
     fee: Number(document.getElementById('tx-fee').value || 0),
+    tax: type === 'sell' ? Number(document.getElementById('tx-tax').value || 0) : 0,
     actualAmount: actualRaw === '' ? null : Number(actualRaw),
     note: document.getElementById('tx-note').value.trim()
   };
@@ -1529,6 +1569,7 @@ document.getElementById('form-tx').addEventListener('submit', async (e)=>{
     e.target.reset();
     delete txDateInput.dataset.iso;
     txDateInput.classList.remove('input-error');
+    txTaxTouched = false;
     updateActualLabel();
   }
   fetchPrices();

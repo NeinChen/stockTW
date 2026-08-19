@@ -240,10 +240,16 @@ footer.note{font-size:12.5px;color:var(--ink-soft);margin-top:6px;line-height:1.
     <div class="card">
       <div class="card-head">
         <h2>整體損益</h2>
-        <div class="toggle-row">
-          <span>不含息</span>
-          <div class="switch on" id="toggle-dividend"></div>
-          <span>含息</span>
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;">
+          <div class="toggle-row">
+            <label style="margin:0;">券商</label>
+            <select id="holdings-broker-filter" style="max-width:170px;width:auto;"></select>
+          </div>
+          <div class="toggle-row">
+            <span>不含息</span>
+            <div class="switch on" id="toggle-dividend"></div>
+            <span>含息</span>
+          </div>
         </div>
       </div>
       <div class="summary-grid" id="summary-grid"></div>
@@ -332,6 +338,11 @@ footer.note{font-size:12.5px;color:var(--ink-soft);margin-top:6px;line-height:1.
         <div class="full">
           <span class="hint" id="tx-tax-hint">依台灣現行法規，證券交易稅只有「賣出」股票時課徵，稅率為成交金額的 0.3%（千分之3），系統會自動幫你試算；買進不課稅、ETF／當沖等特殊稅率請自行修改這一格。</span>
         </div>
+        <div>
+          <label>券商（選填）</label>
+          <input type="text" id="tx-broker" list="broker-list" placeholder="例如 元大證券">
+          <datalist id="broker-list"></datalist>
+        </div>
         <div class="full">
           <label>備註（選填）</label>
           <input type="text" id="tx-note">
@@ -396,6 +407,10 @@ footer.note{font-size:12.5px;color:var(--ink-soft);margin-top:6px;line-height:1.
         <h2>自訂區間損益</h2>
         <div style="display:flex;gap:18px;flex-wrap:wrap;">
           <div class="toggle-row">
+            <label style="margin:0;">券商</label>
+            <select id="report-broker-filter" style="max-width:170px;width:auto;"></select>
+          </div>
+          <div class="toggle-row">
             <span>不含息</span>
             <div class="switch on" id="toggle-report-dividend"></div>
             <span>含息</span>
@@ -449,7 +464,7 @@ const LOCAL_KEY = 'stock_ledger_v1';
 let state = {
   transactions: [],
   dividends: [],
-  settings: { scriptUrl: '', includeDividend: true, initialCapital: null, reportIncludeDividend: true, reportIncludeFeeTax: true },
+  settings: { scriptUrl: '', includeDividend: true, initialCapital: null, reportIncludeDividend: true, reportIncludeFeeTax: true, brokerFilter: '__all__' },
   prices: {},       // code -> {price, prevClose, name, time}
   manualPrices: {}, // code -> 使用者手動輸入的現價（所有自動來源都查不到時的備援，暫存在本機）
   companyNames: {}  // code -> name
@@ -534,6 +549,7 @@ function normalizeTx(t){
     fee: Number(t.fee||0),
     tax: (t.tax===''||t.tax===undefined||t.tax===null) ? 0 : Number(t.tax),
     actualAmount: (t.actualAmount===''||t.actualAmount===undefined||t.actualAmount===null) ? null : Number(t.actualAmount),
+    broker: t.broker || '',
     note: t.note || ''
   };
 }
@@ -549,7 +565,11 @@ async function addTransaction(tx){
   tx.id = uid();
   state.transactions.push(tx);
   saveLocal(); renderAll();
-  if (state.settings.scriptUrl) await pushToServer('addTransaction', tx);
+  if (state.settings.scriptUrl){
+    const result = await pushToServer('addTransaction', tx);
+    return !!result; // 回傳是否確認成功上傳到 Google Sheet
+  }
+  return true; // 沒設定雲端同步，本機儲存即視為完成
 }
 async function deleteTransaction(id){
   state.transactions = state.transactions.filter(t=>t.id!==id);
@@ -560,7 +580,11 @@ async function addDividend(d){
   d.id = uid();
   state.dividends.push(d);
   saveLocal(); renderAll();
-  if (state.settings.scriptUrl) await pushToServer('addDividend', d);
+  if (state.settings.scriptUrl){
+    const result = await pushToServer('addDividend', d);
+    return !!result;
+  }
+  return true;
 }
 async function deleteDividend(id){
   state.dividends = state.dividends.filter(d=>d.id!==id);
@@ -601,38 +625,6 @@ function fetchWithTimeout(url, options={}, timeoutMs=5000){
   const controller = new AbortController();
   const timer = setTimeout(()=>controller.abort(), timeoutMs);
   return fetch(url, { ...options, signal: controller.signal }).finally(()=>clearTimeout(timer));
-}
-
-async function fetchCompanyNames(codes){
-  // 嘗試從公開資料取得公司簡稱（僅在尚未知道名稱時查詢一次）
-  const unknown = codes.filter(c => !state.companyNames[c]);
-  if (unknown.length === 0) return;
-  try{
-    const res = await fetchWithTimeout('https://openapi.twse.com.tw/v1/opendata/t187ap03_L', {}, 5000);
-    const list = await res.json();
-    list.forEach(row=>{
-      const code = row['公司代號'];
-      if (code) state.companyNames[code] = row['公司簡稱'];
-    });
-    saveLocal();
-  }catch(e){
-    console.warn('公司名稱清單取得失敗（可能受瀏覽器 CORS 限制或逾時），改用其他來源。', e);
-  }
-}
-
-async function fetchSingleQuoteViaMis(code){
-  try{
-    const exch = `tse_${code}.tw|otc_${code}.tw`;
-    const res = await fetchWithTimeout(`https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=${encodeURIComponent(exch)}&json=1&_=${Date.now()}`, {}, 5000);
-    const json = await res.json();
-    const item = (json.msgArray || []).find(it => it.c === code);
-    if (!item) return false;
-    const price = parseFloat(item.z) || parseFloat(item.b?.split('_')[0]) || parseFloat(item.a?.split('_')[0]) || parseFloat(item.y) || null;
-    state.prices[code] = { price, prevClose: parseFloat(item.y) || null, name: item.n || code, time: item.t || '' };
-    if (item.n) state.companyNames[code] = item.n;
-    saveLocal();
-    return !!item.n;
-  }catch(e){ return false; }
 }
 
 /** 第二層來源：Yahoo 財經公開報價 API（部分情況下允許瀏覽器跨網域直接查詢） */
@@ -682,54 +674,13 @@ async function fetchViaGoogleSheet(codes){
   return {};
 }
 
-async function lookupNameForCode(code, targetInputId){
+function lookupNameForCode(code, targetInputId){
   if (!code) return;
-  if (state.companyNames[code]){
-    document.getElementById(targetInputId).value = state.companyNames[code];
-    return;
-  }
-  // 0) 先看你之前是不是已經在其他交易/股利紀錄手動輸入過這檔股票的名稱，有的話直接帶出來，不用再查外部來源
+  // 只用「之前你自己輸入過的名稱」直接帶出來，不再嘗試連線外部來源查名稱
+  // （外部來源常常回傳英文名稱，改成完全依賴你自己輸入的繁體中文資料）
   const knownName = codeName(code);
   if (knownName){
     document.getElementById(targetInputId).value = knownName;
-    state.companyNames[code] = knownName; // 順便快取起來，之後更快
-    saveLocal();
-    return;
-  }
-  // 1) 先試即時股價 API 單檔查詢（上市/上櫃都試，順便拿到即時價）
-  const okViaLive = await fetchSingleQuoteViaMis(code);
-  if (okViaLive && state.companyNames[code]){
-    document.getElementById(targetInputId).value = state.companyNames[code];
-    renderTicker(); renderHoldings();
-    return;
-  }
-  // 2) Yahoo 財經報價（常見的第二來源）
-  const yq = await fetchYahooQuote(code);
-  if (yq && yq.name){
-    state.companyNames[code] = yq.name;
-    state.prices[code] = { price: yq.price, prevClose: yq.prevClose, name: yq.name, time: '' };
-    saveLocal();
-    document.getElementById(targetInputId).value = yq.name;
-    renderTicker(); renderHoldings();
-    return;
-  }
-  // 3) 上市公司完整清單
-  await fetchCompanyNames([code]);
-  if (state.companyNames[code]){
-    document.getElementById(targetInputId).value = state.companyNames[code];
-    return;
-  }
-  // 4) 若已連接 Google Sheet，透過 GOOGLEFINANCE 備援查詢
-  if (state.settings.scriptUrl){
-    const prices = await fetchViaGoogleSheet([code]);
-    const info = prices[code];
-    if (info && info.name){
-      state.companyNames[code] = info.name;
-      if (info.price != null) state.prices[code] = { price: info.price, prevClose: info.prevClose, name: info.name, time: '' };
-      saveLocal();
-      document.getElementById(targetInputId).value = info.name;
-      renderTicker(); renderHoldings();
-    }
   }
 }
 
@@ -770,8 +721,8 @@ async function fetchPrices(){
     missing.forEach(c=>{
       const q = yahooResults[c];
       if (q && q.price != null){
-        state.prices[c] = { price: q.price, prevClose: q.prevClose, name: q.name || state.companyNames[c] || c, time: '' };
-        if (q.name) state.companyNames[c] = q.name;
+        // 注意：Yahoo 常回傳英文名稱，這裡故意不寫進 companyNames，避免污染顯示名稱；名稱只用來源1或你自己輸入的資料
+        state.prices[c] = { price: q.price, prevClose: q.prevClose, name: state.companyNames[c] || q.name || c, time: '' };
         viaYahoo++;
       }
     });
@@ -785,8 +736,7 @@ async function fetchPrices(){
     missing.forEach(c=>{
       const info = fallback[c];
       if (info && info.price != null){
-        state.prices[c] = { price: info.price, prevClose: info.prevClose, name: info.name || state.companyNames[c] || c, time:'' };
-        if (info.name) state.companyNames[c] = info.name;
+        state.prices[c] = { price: info.price, prevClose: info.prevClose, name: state.companyNames[c] || info.name || c, time:'' };
         viaSheet++;
       }
     });
@@ -846,9 +796,11 @@ function startPriceLoop(){
 }
 
 /* ===================== FIFO / 損益核心邏輯 ===================== */
-function buildLots(code){
+const BROKER_ALL = '__all__';
+function buildLots(code, brokerFilter){
   const txs = state.transactions
     .filter(t=>t.code===code)
+    .filter(t=> !brokerFilter || brokerFilter===BROKER_ALL || (t.broker||'（未填券商）')===brokerFilter)
     .slice()
     .sort((a,b)=> a.date.localeCompare(b.date));
   const lots = [];
@@ -956,10 +908,11 @@ function realizedForRange(realized, rangeStart, rangeEnd, includeFeeTax){
   return { pnl, proceeds, costBasis };
 }
 
-function totalInvested(code, includeFeeTax){
+function totalInvested(code, includeFeeTax, brokerFilter){
   includeFeeTax = includeFeeTax !== false;
   return state.transactions
     .filter(t=>t.code===code && t.type==='buy')
+    .filter(t=> !brokerFilter || brokerFilter===BROKER_ALL || (t.broker||'（未填券商）')===brokerFilter)
     .reduce((s,t)=>{
       const shares = Number(t.shares), price = Number(t.price), fee = Number(t.fee||0), tax = Number(t.tax||0);
       if (!includeFeeTax) return s + shares*price;
@@ -1028,15 +981,15 @@ function setManualPrice(code, value){
   }
 }
 
-function stockSummary(code, includeDividend){
-  const { lots, realized } = buildLots(code);
+function stockSummary(code, includeDividend, brokerFilter){
+  const { lots, realized } = buildLots(code, brokerFilter);
   const holding = currentHolding(lots);
   const price = priceFor(code);
   const marketValue = price!=null ? holding.shares*price : null;
   const unrealizedPnl = price!=null ? (marketValue - holding.cost) : null;
   const realizedAll = realizedForRange(realized, null, null);
   const divAll = dividendsForCode(code, lots, null, null);
-  const invested = totalInvested(code);
+  const invested = totalInvested(code, true, brokerFilter);
   let totalPnl = realizedAll.pnl + (unrealizedPnl||0);
   if (includeDividend) totalPnl += divAll.total;
   const returnPct = invested>0 ? (totalPnl/invested*100) : null;
@@ -1222,8 +1175,9 @@ function renderCapitalSummary(){
 
 function renderHoldings(){
   const includeDividend = state.settings.includeDividend;
+  const brokerFilter = state.settings.brokerFilter || BROKER_ALL;
   const codes = allCodes().filter(c=>{
-    const {lots} = buildLots(c);
+    const {lots} = buildLots(c, brokerFilter);
     return currentHolding(lots).shares > 0;
   });
   const wrap = document.getElementById('holdings-table');
@@ -1233,7 +1187,7 @@ function renderHoldings(){
     return;
   }
   let data = codes.map(c=>{
-    const s = stockSummary(c, includeDividend);
+    const s = stockSummary(c, includeDividend, brokerFilter);
     const avgCost = s.holding.shares>0 ? s.holding.cost/s.holding.shares : 0;
     const pnl = (s.unrealizedPnl||0) + (includeDividend? s.dividendTotal : 0);
     return { code:c, name: codeName(c)||'（未命名）', s, avgCost, pnl };
@@ -1314,12 +1268,14 @@ function renderHoldings(){
 
 function renderClosedPositions(){
   const includeDividend = state.settings.includeDividend;
+  const brokerFilter = state.settings.brokerFilter || BROKER_ALL;
   const wrap = document.getElementById('closed-table');
   if (!wrap) return;
+  const brokerTxFilter = t => brokerFilter===BROKER_ALL || (t.broker||'（未填券商）')===brokerFilter;
   const codes = allCodes().filter(c=>{
-    const hasTx = state.transactions.some(t=>t.code===c);
+    const hasTx = state.transactions.some(t=>t.code===c && brokerTxFilter(t));
     if (!hasTx) return false;
-    const { lots } = buildLots(c);
+    const { lots } = buildLots(c, brokerFilter);
     return currentHolding(lots).shares === 0;
   });
   if (codes.length===0){
@@ -1327,8 +1283,8 @@ function renderClosedPositions(){
     return;
   }
   let data = codes.map(c=>{
-    const s = stockSummary(c, includeDividend);
-    const codeTx = state.transactions.filter(t=>t.code===c).sort((a,b)=>a.date.localeCompare(b.date));
+    const s = stockSummary(c, includeDividend, brokerFilter);
+    const codeTx = state.transactions.filter(t=>t.code===c && brokerTxFilter(t)).sort((a,b)=>a.date.localeCompare(b.date));
     const firstBuyDate = (codeTx.find(t=>t.type==='buy')||{}).date || codeTx[0].date;
     const lastSellDate = codeTx.filter(t=>t.type==='sell').sort((a,b)=>b.date.localeCompare(a.date))[0].date;
     const pnl = s.realizedPnl + (includeDividend ? s.dividendTotal : 0);
@@ -1383,6 +1339,7 @@ function renderTxTable(){
       case 'price': return Number(row.price);
       case 'fee': return Number(row.fee||0);
       case 'tax': return Number(row.tax||0);
+      case 'broker': return row.broker || '';
       default: return null;
     }
   });
@@ -1395,6 +1352,7 @@ function renderTxTable(){
       <td class="mono">${fmt(t.price,2)}</td>
       <td class="mono">${fmt(t.fee,0)}</td>
       <td class="mono">${fmt(t.tax||0,0)}</td>
+      <td>${t.broker||''}</td>
       <td>${t.note||''}</td>
       <td><div class="row-actions">
         <button class="ghost small" data-edit-tx="${t.id}">編輯</button>
@@ -1410,6 +1368,7 @@ function renderTxTable(){
       ${sortableTh('tx','price','成交價')}
       ${sortableTh('tx','fee','手續費')}
       ${sortableTh('tx','tax','證交稅')}
+      ${sortableTh('tx','broker','券商','text')}
       <th>備註</th><th></th>
     </tr></thead><tbody>${rows}</tbody></table>`;
   wrap.querySelectorAll('[data-del-tx]').forEach(btn=>{
@@ -1483,9 +1442,10 @@ function renderDivTable(){
 }
 
 /** 計算某股票在指定日期區間內，所有交易（買+賣）產生的手續費與證交稅總和 */
-function feeTaxForRange(code, rangeStart, rangeEnd){
+function feeTaxForRange(code, rangeStart, rangeEnd, brokerFilter){
   return state.transactions
     .filter(t=>t.code===code)
+    .filter(t=> !brokerFilter || brokerFilter===BROKER_ALL || (t.broker||'（未填券商）')===brokerFilter)
     .filter(t=>{
       if (rangeStart && t.date < rangeStart) return false;
       if (rangeEnd && t.date > rangeEnd) return false;
@@ -1504,19 +1464,20 @@ function renderReport(){
   const end = document.getElementById('rep-end').value || null;
   const includeDividend = state.settings.reportIncludeDividend;
   const includeFeeTax = state.settings.reportIncludeFeeTax;
-  const codes = allCodes().filter(c=>state.transactions.some(t=>t.code===c));
+  const brokerFilter = state.settings.brokerFilter || BROKER_ALL;
+  const codes = allCodes().filter(c=>state.transactions.some(t=>t.code===c && (brokerFilter===BROKER_ALL || (t.broker||'（未填券商）')===brokerFilter)));
   if (codes.length===0){ wrap.innerHTML = '<div class="empty">尚無資料</div>'; return; }
 
   let sumRealized=0, sumDiv=0, sumUnreal=0, sumInvested=0, sumFee=0, sumTax=0;
   const rows = codes.map(c=>{
-    const { lots, realized } = buildLots(c);
+    const { lots, realized } = buildLots(c, brokerFilter);
     const r = realizedForRange(realized, start, end, includeFeeTax);
     const d = dividendsForCode(c, lots, start, end);
-    const ft = feeTaxForRange(c, start, end);
+    const ft = feeTaxForRange(c, start, end, brokerFilter);
     const holding = currentHolding(lots, null, includeFeeTax);
     const price = priceFor(c);
     const unreal = price!=null ? (holding.shares*price - holding.cost) : 0;
-    const invested = totalInvested(c, includeFeeTax);
+    const invested = totalInvested(c, includeFeeTax, brokerFilter);
     const rangeTotal = r.pnl + (includeDividend? d.total : 0);
     const combined = rangeTotal + unreal;
     sumRealized += r.pnl; sumDiv += d.total; sumUnreal += unreal; sumInvested += invested;
@@ -1551,7 +1512,31 @@ function renderReport(){
     <p class="hint" style="margin-top:8px;">「區間手續費／證交稅」欄位固定顯示實際加總金額，僅供檢視；「合計」是否把這些成本算進損益，則由上方「含/不含手續費/稅」開關決定——開啟時合計已經是扣除手續費與證交稅後的實際損益，關閉時合計會用「純成交價 × 股數」計算，忽略所有交易成本（可以用來比較「有無交易成本」對報酬率的影響）。</p>`;
 }
 
+/** 更新「券商」自動完成清單，以及持倉頁／報表頁的券商篩選下拉選單 */
+function refreshBrokerList(){
+  const brokers = Array.from(new Set(
+    state.transactions.map(t=>t.broker).filter(b=>b && b.trim())
+  )).sort((a,b)=>a.localeCompare(b,'zh-Hant'));
+
+  const datalist = document.getElementById('broker-list');
+  if (datalist){
+    datalist.innerHTML = brokers.map(b=>`<option value="${b}"></option>`).join('');
+  }
+
+  const current = state.settings.brokerFilter || BROKER_ALL;
+  const optionsHtml = `<option value="${BROKER_ALL}">全部券商</option>` +
+    brokers.map(b=>`<option value="${b}">${b}</option>`).join('');
+
+  ['holdings-broker-filter','report-broker-filter'].forEach(id=>{
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    sel.innerHTML = optionsHtml;
+    sel.value = brokers.includes(current) || current===BROKER_ALL ? current : BROKER_ALL;
+  });
+}
+
 function renderAll(){
+  refreshBrokerList();
   renderTicker();
   renderHoldings();
   renderClosedPositions();
@@ -1560,6 +1545,20 @@ function renderAll(){
   renderDivTable();
   renderReport();
 }
+
+document.getElementById('holdings-broker-filter').addEventListener('change', function(){
+  state.settings.brokerFilter = this.value;
+  saveLocal();
+  document.getElementById('report-broker-filter').value = this.value;
+  renderHoldings();
+  renderClosedPositions();
+});
+document.getElementById('report-broker-filter').addEventListener('change', function(){
+  state.settings.brokerFilter = this.value;
+  saveLocal();
+  document.getElementById('holdings-broker-filter').value = this.value;
+  renderReport();
+});
 
 document.getElementById('btn-save-capital').addEventListener('click', ()=>{
   const val = document.getElementById('initial-capital-input').value;
@@ -1717,6 +1716,7 @@ function startEditTx(t){
   document.getElementById('tx-fee').value = t.fee;
   txTaxTouched = true; // 已有既有資料，不要被自動試算覆蓋
   document.getElementById('tx-tax').value = t.tax!=null ? t.tax : 0;
+  document.getElementById('tx-broker').value = t.broker || '';
   document.getElementById('tx-note').value = t.note || '';
   updateActualLabel();
   editingTxId = t.id;
@@ -1768,6 +1768,22 @@ function cancelEditDiv(){
 document.getElementById('tx-cancel-edit').addEventListener('click', cancelEditTx);
 document.getElementById('div-cancel-edit').addEventListener('click', cancelEditDiv);
 
+/** 偵測是否已存在幾乎一模一樣的交易紀錄（同代號/日期/買賣別/股數/成交價） */
+function findDuplicateTx(code, date, type, shares, price, excludeId){
+  return state.transactions.find(t=>
+    t.id !== excludeId &&
+    t.code === code && t.date === date && t.type === type &&
+    Number(t.shares) === Number(shares) && Number(t.price) === Number(price)
+  );
+}
+/** 偵測是否已存在幾乎一模一樣的股利紀錄（同代號/日期/每股金額） */
+function findDuplicateDiv(code, date, amountPerShare, excludeId){
+  return state.dividends.find(d=>
+    d.id !== excludeId &&
+    d.code === code && d.date === date && Number(d.amountPerShare) === Number(amountPerShare)
+  );
+}
+
 document.getElementById('form-tx').addEventListener('submit', async (e)=>{
   e.preventDefault();
   recalcTxFee();
@@ -1781,18 +1797,31 @@ document.getElementById('form-tx').addEventListener('submit', async (e)=>{
   }
   const code = document.getElementById('tx-code').value.trim();
   const shares = Number(document.getElementById('tx-qty').value);
+  const price = Number(document.getElementById('tx-price').value);
   const actualRaw = document.getElementById('tx-actual').value;
   const type = document.getElementById('tx-type').value;
+
+  const dup = findDuplicateTx(code, isoDate, type, shares, price, editingTxId);
+  if (dup){
+    const proceed = confirm(
+      `偵測到已經有一筆幾乎一樣的交易紀錄：\n` +
+      `${formatDateDisplay(dup.date)}・${dup.type==='buy'?'買進':'賣出'}・${code}・${fmt(dup.shares,0)}股・成交價${fmt(dup.price,2)}\n\n` +
+      `確定要再新增一筆完全相同的紀錄嗎？（可能是重複輸入）`
+    );
+    if (!proceed) return;
+  }
+
   const tx = {
     code,
     name: document.getElementById('tx-name').value.trim(),
     type,
     date: isoDate,
     shares,
-    price: Number(document.getElementById('tx-price').value),
+    price,
     fee: Number(document.getElementById('tx-fee').value || 0),
     tax: type === 'sell' ? Number(document.getElementById('tx-tax').value || 0) : 0,
     actualAmount: actualRaw === '' ? null : Number(actualRaw),
+    broker: document.getElementById('tx-broker').value.trim(),
     note: document.getElementById('tx-note').value.trim()
   };
   if (editingTxId){
@@ -1800,12 +1829,17 @@ document.getElementById('form-tx').addEventListener('submit', async (e)=>{
     await updateTransactionRecord(tx);
     cancelEditTx();
   } else {
-    await addTransaction(tx);
-    e.target.reset();
-    delete txDateInput.dataset.iso;
-    txDateInput.classList.remove('input-error');
-    txTaxTouched = false;
-    updateActualLabel();
+    const ok = await addTransaction(tx);
+    if (ok){
+      e.target.reset();
+      document.getElementById('tx-qty').value = 1000;
+      delete txDateInput.dataset.iso;
+      txDateInput.classList.remove('input-error');
+      txTaxTouched = false;
+      updateActualLabel();
+      refreshBrokerList();
+    }
+    // 若上傳雲端失敗，pushToServer 已經跳出提示，故意保留表單內容方便你直接重試，不清空
   }
   fetchPrices();
 });
@@ -1820,11 +1854,24 @@ document.getElementById('form-div').addEventListener('submit', async (e)=>{
     alert('日期格式不正確，請輸入8碼數字，例如 20260122');
     return;
   }
+  const divCode = document.getElementById('div-code').value.trim();
+  const amountPerShare = Number(document.getElementById('div-amt').value);
+
+  const dupDiv = findDuplicateDiv(divCode, isoDivDate, amountPerShare, editingDivId);
+  if (dupDiv){
+    const proceed = confirm(
+      `偵測到已經有一筆幾乎一樣的股利紀錄：\n` +
+      `${formatDateDisplay(dupDiv.date)}・${divCode}・每股${fmt(dupDiv.amountPerShare,2)}元\n\n` +
+      `確定要再新增一筆完全相同的紀錄嗎？（可能是重複輸入）`
+    );
+    if (!proceed) return;
+  }
+
   const d = {
-    code: document.getElementById('div-code').value.trim(),
+    code: divCode,
     name: document.getElementById('div-name').value.trim(),
     date: isoDivDate,
-    amountPerShare: Number(document.getElementById('div-amt').value),
+    amountPerShare,
     note: document.getElementById('div-note').value.trim()
   };
   if (editingDivId){
@@ -1832,10 +1879,13 @@ document.getElementById('form-div').addEventListener('submit', async (e)=>{
     await updateDividendRecord(d);
     cancelEditDiv();
   } else {
-    await addDividend(d);
-    e.target.reset();
-    delete divDateInput.dataset.iso;
-    divDateInput.classList.remove('input-error');
+    const ok = await addDividend(d);
+    if (ok){
+      e.target.reset();
+      delete divDateInput.dataset.iso;
+      divDateInput.classList.remove('input-error');
+    }
+    // 若上傳雲端失敗，pushToServer 已經跳出提示，故意保留表單內容方便你直接重試，不清空
   }
 });
 
